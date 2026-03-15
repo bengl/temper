@@ -16,6 +16,34 @@ pub fn std_sleep(ms: i32) -> Promise<()> {
     promise
 }
 
+pub fn std_term_cols() -> i32 {
+    #[cfg(unix)]
+    {
+        let mut ws = std::mem::MaybeUninit::<libc::winsize>::uninit();
+        let fd = unsafe { libc::STDOUT_FILENO };
+        let ret = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, ws.as_mut_ptr()) };
+        if ret == 0 {
+            let ws = unsafe { ws.assume_init() };
+            return ws.ws_col as i32;
+        }
+    }
+    80
+}
+
+pub fn std_term_rows() -> i32 {
+    #[cfg(unix)]
+    {
+        let mut ws = std::mem::MaybeUninit::<libc::winsize>::uninit();
+        let fd = unsafe { libc::STDOUT_FILENO };
+        let ret = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, ws.as_mut_ptr()) };
+        if ret == 0 {
+            let ws = unsafe { ws.assume_init() };
+            return ws.ws_row as i32;
+        }
+    }
+    24
+}
+
 pub fn std_read_line() -> Promise<Option<Arc<String>>> {
     let pb = PromiseBuilder::new();
     let promise = pb.promise();

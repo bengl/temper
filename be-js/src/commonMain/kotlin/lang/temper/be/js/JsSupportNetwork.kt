@@ -468,12 +468,23 @@ private val supportedAutoConnecteds = setOf(
     // std/io
     "stdSleep",
     "stdReadLine",
+    "stdTermCols",
+    "stdTermRows",
     // std/net
     "stdNetSend",
     "NetResponse",
     "NetResponse::getStatus",
     "NetResponse::getContentType",
     "NetResponse::getBodyContent",
+    // std/ws
+    "wsListen",
+    "wsAccept",
+    "wsConnect",
+    "wsSend",
+    "wsRecv",
+    "wsClose",
+    "WsServer",
+    "WsConnection",
 )
 
 private val supportedMappedConnecteds = mapOf(

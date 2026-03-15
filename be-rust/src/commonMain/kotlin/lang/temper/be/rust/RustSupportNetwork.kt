@@ -805,6 +805,14 @@ private val neStrStr = CmpStrStr("NeStrStr", BuiltinOperatorId.NeStrStr, RustOpe
 private val netSend = FunctionCall("stdNetSend", "send_request", cloneEvenIfFirst = true)
 private val stdSleep = FunctionCall("stdSleep", "temper_std::io::std_sleep")
 private val stdReadLine = FunctionCall("stdReadLine", "temper_std::io::std_read_line")
+private val stdTermCols = FunctionCall("stdTermCols", "temper_std::io::std_term_cols")
+private val stdTermRows = FunctionCall("stdTermRows", "temper_std::io::std_term_rows")
+private val wsListen = FunctionCall("wsListen", "temper_std::ws::ws_listen")
+private val wsAccept = FunctionCall("wsAccept", "temper_std::ws::ws_accept", cloneEvenIfFirst = true)
+private val wsConnect = FunctionCall("wsConnect", "temper_std::ws::ws_connect", cloneEvenIfFirst = true)
+private val wsSend = FunctionCall("wsSend", "temper_std::ws::ws_send", cloneEvenIfFirst = true)
+private val wsRecv = FunctionCall("wsRecv", "temper_std::ws::ws_recv", cloneEvenIfFirst = true)
+private val wsClose = FunctionCall("wsClose", "temper_std::ws::ws_close", cloneEvenIfFirst = true)
 
 internal object PairConstructor : RustInlineSupportCode(
     "Pair::constructor",
@@ -1032,6 +1040,14 @@ private val connectedReferences = listOf(
     netSend,
     stdSleep,
     stdReadLine,
+    stdTermCols,
+    stdTermRows,
+    wsListen,
+    wsAccept,
+    wsConnect,
+    wsSend,
+    wsRecv,
+    wsClose,
     promiseBuilderComplete,
     PairConstructor,
     regexCompileFormatted,
