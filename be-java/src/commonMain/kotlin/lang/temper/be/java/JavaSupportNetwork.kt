@@ -1104,6 +1104,10 @@ val JavaLang.doneResult by receiver {
 // Async support
 val JavaLang.runAsync by receiver { separateCode(temperRunAsync) }
 
+// std/io support
+val JavaLang.stdSleep by receiver { separateCode(temperStdSleep) }
+val JavaLang.stdReadLine by receiver { separateCode(temperStdReadLine) }
+
 // std/net support
 val JavaLang.netCoreStdNetSend by receiver { separateCode(temperNetCoreStdNetSend) }
 
@@ -1546,4 +1550,6 @@ private val connections: Map<String, ((JavaLang) -> SupportCode)> = mapOf(
     "empty" to { it.empty },
     "ignore" to { it.doNothing },
     "stdNetSend" to { it.netCoreStdNetSend },
+    "stdSleep" to { it.stdSleep },
+    "stdReadLine" to { it.stdReadLine },
 )

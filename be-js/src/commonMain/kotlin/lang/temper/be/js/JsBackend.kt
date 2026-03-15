@@ -618,6 +618,7 @@ class JsBackend private constructor(
             filePath("deque.js"),
             filePath("float.js"),
             filePath("interface.js"),
+            filePath("io.js"),
             filePath("listed.js"),
             filePath("mapped.js"),
             filePath("net.js"),
