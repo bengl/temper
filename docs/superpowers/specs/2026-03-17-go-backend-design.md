@@ -144,7 +144,7 @@ Bundled as compiler JAR resources at `be-go/src/commonMain/resources/lang/temper
 | `list.go` | Slice helpers (immutable-style append, bounds-checked get) |
 | `math.go` | Integer overflow checking, float utilities |
 
-Generated library `go.mod` references `temper-core` via a local `replace` directive pointing at the extracted resource directory.
+Generated library `go.mod` includes a `go 1.24` directive (pinned in `GoSpecifics` as a minimum-version constant, analogous to `RustcCommand.minVersion`) and references `temper-core` via a local `replace` directive pointing at the extracted resource directory. `temper-core/go.mod` declares its own module path (e.g. `temper.systems/core/go`).
 
 ## Testing
 
@@ -157,7 +157,9 @@ All existing functional test suite cases (hello world, control flow, type operat
 
 **`GoBackendTest.kt`** covers unit-level concerns: individual TmpL node → Go AST translations, name mangling, type mapping edge cases.
 
-**CI:** Add `go` installation step to `.github/workflows/build-and-run-tests.yml` alongside existing Node/Python/Rust/etc. installs.
+**CI:** Go is pre-installed on `ubuntu-latest` GitHub-hosted runners; verify the pre-installed version meets Go 1.24 before adding an explicit `actions/setup-go` step.
+
+**`ControlFlowAsync`:** Since `coroutineStrategy = TranslateToRegularFunction`, async Temper code is lowered to synchronous Go. The Rust backend uses the same strategy and passes `ControlFlowAsync`. The Go column in the functional test matrix should start with `ControlFlowAsync` marked as expected-pass; open a tracking issue if it fails.
 
 ## Integration Steps
 
