@@ -14,7 +14,7 @@ class GoModulePaths(
     val modulePathsByRoot: Map<FilePath, String>,
 )
 
-val goModulePathKey = Symbol("goModulePath")
+internal val goModulePathKey = Symbol("goModulePath")
 
 internal fun makeGoModulePaths(backend: GoBackend): GoModulePaths {
     val config = backend.libraryConfigurations.currentLibraryConfiguration
