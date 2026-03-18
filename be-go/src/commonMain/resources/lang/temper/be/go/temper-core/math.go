@@ -13,11 +13,10 @@ func AddInt(a, b int) int {
 
 // SubInt subtracts b from a and panics on overflow.
 func SubInt(a, b int) int {
-	result := a - b
-	if (b < 0 && result < a) || (b > 0 && result > a) {
+	if (b < 0 && a > math.MaxInt+b) || (b > 0 && a < math.MinInt+b) {
 		panic("integer overflow")
 	}
-	return result
+	return a - b
 }
 
 // MulInt multiplies two ints and panics on overflow.

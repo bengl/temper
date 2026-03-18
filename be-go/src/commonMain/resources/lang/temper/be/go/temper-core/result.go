@@ -18,7 +18,7 @@ func (e *TemperError) Error() string {
 func (e *TemperError) Unwrap() error { return e.Cause }
 
 // NewError creates a TemperError with the given message.
-func NewError(msg string) *TemperError { return &TemperError{Message: msg} }
+func NewError(msg string) error { return &TemperError{Message: msg} }
 
 // WrapError wraps an existing error as a TemperError.
-func WrapError(msg string, cause error) *TemperError { return &TemperError{Message: msg, Cause: cause} }
+func WrapError(msg string, cause error) error { return &TemperError{Message: msg, Cause: cause} }
