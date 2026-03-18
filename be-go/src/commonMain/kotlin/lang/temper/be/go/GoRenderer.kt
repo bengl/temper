@@ -22,20 +22,20 @@ object GoRenderer {
             is Go.BasicLit -> renderBasicLit(node, sink)
             is Go.SelectorExpr -> { renderExpr(node.x, sink); sink.punct("."); sink.name(node.sel) }
             is Go.CallExpr -> renderCallExpr(node, sink)
-            is Go.IndexExpr -> { renderExpr(node.x, sink); sink.punct("["); renderExpr(node.index, sink); sink.punct("]") }
-            is Go.BinaryExpr -> { renderExpr(node.x, sink); sink.ws(); sink.punct(node.op); sink.ws(); renderExpr(node.y, sink) }
-            is Go.UnaryExpr -> { sink.punct(node.op); renderExpr(node.x, sink) }
+            is Go.IndexExpr -> { renderExpr(node.x, sink); sink.bracket("["); renderExpr(node.index, sink); sink.bracket("]") }
+            is Go.BinaryExpr -> { renderExpr(node.x, sink); sink.infixOp(node.op); renderExpr(node.y, sink) }
+            is Go.UnaryExpr -> { sink.prefixOp(node.op); renderExpr(node.x, sink) }
             is Go.CompositeLit -> renderCompositeLit(node, sink)
             is Go.StarExpr -> { sink.punct("*"); renderExpr(node.x, sink) }
             is Go.AddressExpr -> { sink.punct("&"); renderExpr(node.x, sink) }
             is Go.SliceExpr -> renderSliceExpr(node, sink)
-            is Go.TypeAssertExpr -> { renderExpr(node.x, sink); sink.punct(".("); renderTypeExpr(node.assertType, sink); sink.punct(")") }
+            is Go.TypeAssertExpr -> { renderExpr(node.x, sink); sink.punct(".("); renderTypeExpr(node.assertType, sink); sink.bracket(")") }
             is Go.FuncLit -> renderFuncLit(node, sink)
             is Go.KeyValueExpr -> { renderExpr(node.key, sink); sink.punct(":"); sink.ws(); renderExpr(node.value, sink) }
             is Go.NamedType -> sink.name(node.name)
             is Go.PointerType -> { sink.punct("*"); renderTypeExpr(node.base, sink) }
             is Go.SliceType -> { sink.punct("[]"); renderTypeExpr(node.elem, sink) }
-            is Go.MapType -> { sink.keyword("map"); sink.punct("["); renderTypeExpr(node.key, sink); sink.punct("]"); renderTypeExpr(node.value, sink) }
+            is Go.MapType -> { sink.keyword("map"); sink.bracket("["); renderTypeExpr(node.key, sink); sink.bracket("]"); renderTypeExpr(node.value, sink) }
             is Go.QualifiedType -> { sink.name(node.pkg); sink.punct("."); sink.name(node.name) }
             is Go.IndexTypeExpr -> renderIndexTypeExpr(node, sink)
             is Go.FuncType -> renderFuncType(node, sink)
@@ -50,9 +50,9 @@ object GoRenderer {
     private fun renderFile(file: Go.File, sink: TokenSink) {
         sink.keyword("package"); sink.ws(); sink.name(file.packageName); sink.endLine(); sink.endLine()
         if (file.imports.isNotEmpty()) {
-            sink.keyword("import"); sink.ws(); sink.punct("("); sink.endLine()
+            sink.keyword("import"); sink.ws(); sink.bracket("("); sink.endLine()
             for (imp in file.imports) { renderImportSpec(imp, sink); sink.endLine() }
-            sink.punct(")"); sink.endLine(); sink.endLine()
+            sink.bracket(")"); sink.endLine(); sink.endLine()
         }
         for (decl in file.decls) {
             render(decl, sink)
@@ -63,25 +63,25 @@ object GoRenderer {
     private fun renderFuncDecl(fn: Go.FuncDecl, sink: TokenSink) {
         sink.keyword("func")
         fn.receiver?.let { recv ->
-            sink.ws(); sink.punct("("); renderField(recv, sink); sink.punct(")")
+            sink.ws(); sink.bracket("("); renderField(recv, sink); sink.bracket(")")
         }
         sink.ws(); sink.name(fn.name)
-        sink.punct("(")
+        sink.bracket("(")
         fn.params.forEachIndexed { i, p ->
             if (i > 0) { sink.punct(","); sink.ws() }
             renderField(p, sink)
         }
-        sink.punct(")")
+        sink.bracket(")")
         when {
             fn.results.isEmpty() -> {}
             fn.results.size == 1 -> { sink.ws(); renderTypeExpr(fn.results[0], sink) }
             else -> {
-                sink.ws(); sink.punct("(")
+                sink.ws(); sink.bracket("(")
                 fn.results.forEachIndexed { i, r ->
                     if (i > 0) { sink.punct(","); sink.ws() }
                     renderTypeExpr(r, sink)
                 }
-                sink.punct(")")
+                sink.bracket(")")
             }
         }
         sink.ws(); renderBlockStmt(fn.body, sink); sink.endLine()
@@ -144,12 +144,12 @@ object GoRenderer {
 
     private fun renderCallExpr(call: Go.CallExpr, sink: TokenSink) {
         renderExpr(call.fn, sink)
-        sink.punct("(")
+        sink.bracket("(")
         call.args.forEachIndexed { i, a ->
             if (i > 0) { sink.punct(","); sink.ws() }
             renderExpr(a, sink)
         }
-        sink.punct(")")
+        sink.bracket(")")
     }
 
     private fun renderCompositeLit(lit: Go.CompositeLit, sink: TokenSink) {
@@ -164,31 +164,31 @@ object GoRenderer {
 
     private fun renderSliceExpr(expr: Go.SliceExpr, sink: TokenSink) {
         renderExpr(expr.x, sink)
-        sink.punct("[")
+        sink.bracket("[")
         expr.low?.let { renderExpr(it, sink) }
         sink.punct(":")
         expr.high?.let { renderExpr(it, sink) }
-        sink.punct("]")
+        sink.bracket("]")
     }
 
     private fun renderFuncLit(fn: Go.FuncLit, sink: TokenSink) {
         sink.keyword("func")
-        sink.punct("(")
+        sink.bracket("(")
         fn.params.forEachIndexed { i, p ->
             if (i > 0) { sink.punct(","); sink.ws() }
             renderField(p, sink)
         }
-        sink.punct(")")
+        sink.bracket(")")
         if (fn.results.isNotEmpty()) {
             sink.ws()
             if (fn.results.size == 1) renderTypeExpr(fn.results[0], sink)
             else {
-                sink.punct("(")
+                sink.bracket("(")
                 fn.results.forEachIndexed { i, r ->
                     if (i > 0) { sink.punct(","); sink.ws() }
                     renderTypeExpr(r, sink)
                 }
-                sink.punct(")")
+                sink.bracket(")")
             }
         }
         sink.ws(); renderBlockStmt(fn.body, sink)
@@ -196,31 +196,31 @@ object GoRenderer {
 
     private fun renderIndexTypeExpr(expr: Go.IndexTypeExpr, sink: TokenSink) {
         renderTypeExpr(expr.base, sink)
-        sink.punct("[")
+        sink.bracket("[")
         expr.typeArgs.forEachIndexed { i, t ->
             if (i > 0) { sink.punct(","); sink.ws() }
             renderTypeExpr(t, sink)
         }
-        sink.punct("]")
+        sink.bracket("]")
     }
 
     private fun renderFuncType(ft: Go.FuncType, sink: TokenSink) {
-        sink.keyword("func"); sink.punct("(")
+        sink.keyword("func"); sink.bracket("(")
         ft.params.forEachIndexed { i, p ->
             if (i > 0) { sink.punct(","); sink.ws() }
             renderField(p, sink)
         }
-        sink.punct(")")
+        sink.bracket(")")
         if (ft.results.isNotEmpty()) {
             sink.ws()
             if (ft.results.size == 1) renderTypeExpr(ft.results[0], sink)
             else {
-                sink.punct("(")
+                sink.bracket("(")
                 ft.results.forEachIndexed { i, r ->
                     if (i > 0) { sink.punct(","); sink.ws() }
                     renderTypeExpr(r, sink)
                 }
-                sink.punct(")")
+                sink.bracket(")")
             }
         }
     }
@@ -238,22 +238,22 @@ object GoRenderer {
     }
 
     private fun renderInterfaceMethod(m: Go.InterfaceMethod, sink: TokenSink) {
-        sink.name(m.name); sink.punct("(")
+        sink.name(m.name); sink.bracket("(")
         m.params.forEachIndexed { i, p ->
             if (i > 0) { sink.punct(","); sink.ws() }
             renderField(p, sink)
         }
-        sink.punct(")")
+        sink.bracket(")")
         when {
             m.results.isEmpty() -> {}
             m.results.size == 1 -> { sink.ws(); renderTypeExpr(m.results[0], sink) }
             else -> {
-                sink.ws(); sink.punct("(")
+                sink.ws(); sink.bracket("(")
                 m.results.forEachIndexed { i, r ->
                     if (i > 0) { sink.punct(","); sink.ws() }
                     renderTypeExpr(r, sink)
                 }
-                sink.punct(")")
+                sink.bracket(")")
             }
         }
     }
