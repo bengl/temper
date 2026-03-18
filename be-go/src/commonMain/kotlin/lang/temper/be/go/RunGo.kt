@@ -4,7 +4,6 @@ import lang.temper.be.Dependencies
 import lang.temper.be.cli.CliEnv
 import lang.temper.be.cli.EXIT_UNAVAILABLE
 import lang.temper.be.cli.Effort
-import lang.temper.be.cli.EffortSuccess
 import lang.temper.be.cli.ExecInteractiveRepl
 import lang.temper.be.cli.RunBackendSpecificCompilationStepRequest
 import lang.temper.be.cli.RunLibraryRequest

@@ -38,6 +38,7 @@ class GoBackend(setup: BackendSetup<GoBackend>) : Backend<GoBackend>(Factory.bac
         allocateTextFile(module, FILE_EXTENSION, defaultName = "module")
 
     companion object {
+        internal const val BACKEND_ID = "go"
         const val FILE_EXTENSION = ".go"
         val mimeType = MimeType("text", "go")
         private val resourceBase = dirPath("lang", "temper", "be", "go")
@@ -71,5 +72,3 @@ class GoBackend(setup: BackendSetup<GoBackend>) : Backend<GoBackend>(Factory.bac
         override fun make(setup: BackendSetup<GoBackend>) = GoBackend(setup)
     }
 }
-
-private const val BACKEND_ID = "go"
