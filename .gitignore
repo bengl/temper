@@ -71,6 +71,7 @@ hs_err_pid*
 /be-helpers/build
 /be-helpers/.gradle
 /be-rust/build
+/be-go/build
 /be-rust/.gradle
 /be-test-helpers/build
 /be-test-helpers/.gradle

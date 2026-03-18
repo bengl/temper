@@ -49,6 +49,7 @@ kotlin {
                 implementation project(':be-lua')
                 implementation project(':be-py')
                 implementation project(':be-rust')
+                implementation project(':be-go')
 
                 // Dynamically add all subdirectories in external as project dependencies
                 // These are likely experimental or proprietary backends or plugins.
