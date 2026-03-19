@@ -51,7 +51,12 @@ object Go {
     sealed class TypeDef(pos: Position) : Node(pos)
     class StructType(pos: Position, val fields: List<Field>) : TypeDef(pos)
     class InterfaceType(pos: Position, val methods: List<InterfaceMethod>) : TypeDef(pos)
-    class InterfaceMethod(pos: Position, val name: String, val params: List<Field>, val results: List<TypeExpr>) : Node(pos)
+    class InterfaceMethod(
+        pos: Position,
+        val name: String,
+        val params: List<Field>,
+        val results: List<TypeExpr>,
+    ) : Node(pos)
 
     // ── Statements ────────────────────────────────────────────────────────────
 
@@ -63,6 +68,9 @@ object Go {
     enum class AssignOp { Assign, Define }
     class ExprStmt(pos: Position, val expr: Expr) : Stmt(pos)
     class DeclStmt(pos: Position, val decl: VarDecl) : Stmt(pos)
+
+    /** Go `for` statement — covers while-loops by leaving init/post null. */
+    class ForStmt(pos: Position, val init: Stmt?, val cond: Expr?, val post: Stmt?, val body: BlockStmt) : Stmt(pos)
 
     // ── Expressions ───────────────────────────────────────────────────────────
 

@@ -9,6 +9,7 @@ import lang.temper.format.toStringViaTokenSink
 import lang.temper.name.ImplicitsCodeLocation
 import lang.temper.name.ResolvedName
 import lang.temper.name.ResolvedParsedName
+import lang.temper.type.WellKnownTypes
 import lang.temper.value.TBoolean
 import lang.temper.value.TFloat64
 import lang.temper.value.TInt
@@ -19,13 +20,14 @@ import lang.temper.value.TVoid
 
 /**
  * Minimal TmpL-to-Go translator. Currently handles enough nodes for simple programs
- * like hello-world.
+ * like hello-world and fibonacci.
  */
 class GoTranslator(
     val module: TmpL.Module,
 ) {
     private val imports = mutableSetOf<String>()
     private val initStmts = mutableListOf<Go.Stmt>()
+    private val topLevelFuncs = mutableListOf<Go.FuncDecl>()
     private val supportCodeByName = mutableMapOf<ResolvedName, SupportCode>()
 
     fun needsImport(pkg: String) {
@@ -45,7 +47,7 @@ class GoTranslator(
             processTopLevel(topLevel)
         }
 
-        // Build a Go.File with a main function containing init stmts.
+        // Build a Go.File with top-level functions + a main function.
         val pos = module.pos
         val mainFunc = Go.FuncDecl(
             pos,
@@ -56,11 +58,13 @@ class GoTranslator(
             body = Go.BlockStmt(pos, initStmts),
         )
 
+        val allDecls: List<Go.Decl> = topLevelFuncs + listOf(mainFunc)
+
         val file = Go.File(
             pos,
             packageName = "main",
             imports = imports.sorted().map { Go.ImportSpec(pos, alias = null, path = it) },
-            decls = listOf(mainFunc),
+            decls = allDecls,
         )
 
         // Render to string.
@@ -80,7 +84,7 @@ class GoTranslator(
             is TmpL.ModuleInitBlock -> processModuleInitBlock(topLevel)
             is TmpL.ModuleLevelDeclaration -> processModuleLevelDeclaration(topLevel)
             is TmpL.SupportCodeDeclaration -> {} // Already collected in first pass
-            is TmpL.ModuleFunctionDeclaration -> {} // Not needed for hello-world yet
+            is TmpL.ModuleFunctionDeclaration -> processModuleFunctionDeclaration(topLevel)
             else -> {} // Skip other top levels
         }
     }
@@ -92,7 +96,64 @@ class GoTranslator(
     private fun processModuleLevelDeclaration(decl: TmpL.ModuleLevelDeclaration) {
         // Skip console declarations.
         if (isConsoleDeclaration(decl)) return
-        // Skip other module-level declarations for now.
+        // Translate as a variable declaration in init.
+        val stmt = translateLocalDeclaration(decl) ?: return
+        initStmts.add(stmt)
+    }
+
+    private fun processModuleFunctionDeclaration(decl: TmpL.ModuleFunctionDeclaration) {
+        val pos = decl.pos
+        val nameText = nameToString(decl.name.name) ?: return
+
+        // Translate parameters (skip `this` parameter if present).
+        val params = decl.parameters.parameters.mapNotNull { formal ->
+            // Skip `this` parameter — Go top-level functions have no receiver here.
+            if (formal.name == decl.parameters.thisName) return@mapNotNull null
+            val formalName = nameToString(formal.name.name) ?: return@mapNotNull null
+            val formalType = translateAType(formal.type) ?: Go.NamedType(pos, "any")
+            Go.Field(pos, name = formalName, type = formalType)
+        }
+
+        // Translate return type.
+        val returnType = translateAType(decl.returnType)
+        val results = if (returnType != null) listOf(returnType) else emptyList()
+
+        // Translate body.
+        val bodyStmts = mutableListOf<Go.Stmt>()
+        processStatements(decl.body.statements, bodyStmts)
+
+        val funcDecl = Go.FuncDecl(
+            pos,
+            name = nameText,
+            receiver = null,
+            params = params,
+            results = results,
+            body = Go.BlockStmt(pos, bodyStmts),
+        )
+        topLevelFuncs.add(funcDecl)
+    }
+
+    private fun translateAType(atype: TmpL.AType): Go.TypeExpr? {
+        val pos = atype.pos
+        val ot = atype.privOtOrNull ?: return null
+        return translateType(ot, pos)
+    }
+
+    private fun translateType(type: TmpL.Type, pos: lang.temper.log.Position): Go.TypeExpr? {
+        return when (type) {
+            is TmpL.NominalType -> {
+                val typeDef = type.typeName.sourceDefinition ?: return null
+                when (typeDef) {
+                    WellKnownTypes.intTypeDefinition -> Go.NamedType(pos, "int")
+                    WellKnownTypes.booleanTypeDefinition -> Go.NamedType(pos, "bool")
+                    WellKnownTypes.stringTypeDefinition -> Go.NamedType(pos, "string")
+                    WellKnownTypes.float64TypeDefinition -> Go.NamedType(pos, "float64")
+                    WellKnownTypes.voidTypeDefinition -> null // void -> no return type
+                    else -> null // unsupported type
+                }
+            }
+            else -> null
+        }
     }
 
     private fun isConsoleDeclaration(decl: TmpL.ModuleLevelDeclaration): Boolean {
@@ -123,8 +184,69 @@ class GoTranslator(
                 val expr = statement.expression?.let { translateExpression(it) }
                 Go.ReturnStmt(statement.pos, if (expr != null) listOf(expr) else emptyList())
             }
+            is TmpL.LocalDeclaration -> translateLocalDeclaration(statement)
+            is TmpL.Assignment -> translateAssignment(statement)
+            is TmpL.WhileStatement -> translateWhileStatement(statement)
+            is TmpL.IfStatement -> translateIfStatement(statement)
             else -> null // Skip unhandled statements
         }
+    }
+
+    private fun translateLocalDeclaration(decl: TmpL.ModuleOrLocalDeclaration): Go.Stmt? {
+        val pos = decl.pos
+        val nameText = nameToString(decl.name.name) ?: return null
+        val initExpr = decl.init?.let { translateExpression(it) }
+        // Use `:=` short variable declaration if we have an initializer (simpler for local vars).
+        // Use `var` declaration if no initializer.
+        return if (initExpr != null) {
+            Go.AssignStmt(
+                pos,
+                lhs = listOf(Go.Ident(pos, nameText)),
+                rhs = listOf(initExpr),
+                op = Go.AssignOp.Define,
+            )
+        } else {
+            val typeExpr = decl.type.privOtOrNull?.let { translateType(it, pos) }
+            Go.DeclStmt(pos, Go.VarDecl(pos, nameText, typeExpr, null))
+        }
+    }
+
+    private fun translateAssignment(statement: TmpL.Assignment): Go.Stmt? {
+        val pos = statement.pos
+        val nameText = nameToString(statement.left.name) ?: return null
+        val right = statement.right as? TmpL.Expression ?: return null
+        val rightExpr = translateExpression(right) ?: return null
+        return Go.AssignStmt(
+            pos,
+            lhs = listOf(Go.Ident(pos, nameText)),
+            rhs = listOf(rightExpr),
+            op = Go.AssignOp.Assign,
+        )
+    }
+
+    private fun translateWhileStatement(statement: TmpL.WhileStatement): Go.Stmt? {
+        val pos = statement.pos
+        val cond = translateExpression(statement.test) ?: return null
+        val bodyStmt = translateStatement(statement.body)
+        val bodyBlock = when (bodyStmt) {
+            is Go.BlockStmt -> bodyStmt
+            null -> Go.BlockStmt(pos, emptyList())
+            else -> Go.BlockStmt(pos, listOf(bodyStmt))
+        }
+        return Go.ForStmt(pos, init = null, cond = cond, post = null, body = bodyBlock)
+    }
+
+    private fun translateIfStatement(statement: TmpL.IfStatement): Go.Stmt? {
+        val pos = statement.pos
+        val cond = translateExpression(statement.test) ?: return null
+        val consequentStmt = translateStatement(statement.consequent)
+        val consequentBlock = when (consequentStmt) {
+            is Go.BlockStmt -> consequentStmt
+            null -> Go.BlockStmt(pos, emptyList())
+            else -> Go.BlockStmt(pos, listOf(consequentStmt))
+        }
+        val elseStmt = statement.alternate?.let { translateStatement(it) }
+        return Go.IfStmt(pos, init = null, cond = cond, body = consequentBlock, elseStmt = elseStmt)
     }
 
     private fun translateExpressionStatement(statement: TmpL.ExpressionStatement): Go.Stmt? {
@@ -174,6 +296,10 @@ class GoTranslator(
         return when (supportCode) {
             is GoConsoleLog -> supportCode.inlineToGo(pos, args, this)
             is GoGetConsole -> supportCode.inlineToGo(pos, this)
+            is GoInfixOp -> supportCode.inlineToGo(pos, args)
+            is GoUnaryOp -> supportCode.inlineToGo(pos, args)
+            is GoStrCat -> supportCode.inlineToGo(pos, args)
+            is GoFmtSprint -> supportCode.inlineToGo(pos, args, this)
             else -> null
         }
     }
@@ -188,7 +314,7 @@ class GoTranslator(
         }
     }
 
-    private fun nameToString(name: lang.temper.name.TemperName): String? {
+    internal fun nameToString(name: lang.temper.name.TemperName): String? {
         return when (name) {
             is ResolvedParsedName -> name.baseName.nameText
             else -> name.rawDiagnostic
