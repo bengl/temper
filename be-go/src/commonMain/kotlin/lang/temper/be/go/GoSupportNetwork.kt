@@ -31,7 +31,7 @@ object GoSupportNetwork : SupportNetwork {
         pos: Position,
         builtin: NamedBuiltinFun,
         genre: Genre,
-    ): SupportCode? = builtin.builtinOperatorId?.let { supportCodeByOperatorId(it) }
+    ): SupportCode? = builtin.builtinOperatorId?.let { supportCodeByOperatorId[it] }
 
     override fun optionalSupportCode(
         optionalSupportCodeKind: OptionalSupportCodeKind,
@@ -60,12 +60,17 @@ private val connectedReferences: Map<String, SupportCode> = mapOf(
     "Boolean::toString" to GoFmtSprint("Boolean::toString"),
 )
 
+internal sealed class GoSupportCode(
+    val connectedKey: String,
+) : NamedSupportCode, FunctionSupportCode {
+    override val baseName: ParsedName = ParsedName(connectedKey)
+    override fun renderTo(tokenSink: TokenSink) = tokenSink.word(connectedKey)
+
+    abstract fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr?
+}
+
 internal object GoConsoleLog : GoSupportCode("Console::log") {
-    fun inlineToGo(
-        pos: Position,
-        arguments: List<TypedArg<Go.Expr>>,
-        translator: GoTranslator,
-    ): Go.Expr {
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
         // arguments[0] is `this` (the console), arguments[1] is the value to print
         val value = arguments[1].expr
         translator.needsImport("fmt")
@@ -78,48 +83,41 @@ internal object GoConsoleLog : GoSupportCode("Console::log") {
 }
 
 internal object GoGetConsole : GoSupportCode("::getConsole") {
-    fun inlineToGo(
+    override fun inlineToGo(
         pos: Position,
+        @Suppress("UnusedParameter") arguments: List<TypedArg<Go.Expr>>,
         @Suppress("UnusedParameter") translator: GoTranslator,
     ): Go.Expr {
-        // The console object itself is not needed in Go; just return a placeholder
         return Go.Ident(pos, "_console")
     }
 }
 
-internal abstract class GoSupportCode(
-    val connectedKey: String,
-) : NamedSupportCode, FunctionSupportCode {
-    override val baseName: ParsedName = ParsedName(connectedKey)
-    override fun renderTo(tokenSink: TokenSink) = tokenSink.word(connectedKey)
-}
-
 internal class GoInfixOp(
     name: String,
-    val operator: String,
+    val operator: Go.BinOp,
 ) : GoSupportCode(name) {
-    fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>): Go.Expr {
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
         return Go.BinaryExpr(pos, arguments[0].expr, operator, arguments[1].expr)
     }
 }
 
 internal class GoUnaryOp(
     name: String,
-    val operator: String,
+    val operator: Go.UnaryOp,
 ) : GoSupportCode(name) {
-    fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>): Go.Expr {
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
         return Go.UnaryExpr(pos, operator, arguments[0].expr)
     }
 }
 
 internal class GoStrCat(name: String) : GoSupportCode(name) {
-    fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>): Go.Expr {
-        return Go.BinaryExpr(pos, arguments[0].expr, "+", arguments[1].expr)
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
+        return Go.BinaryExpr(pos, arguments[0].expr, Go.BinOp.Plus, arguments[1].expr)
     }
 }
 
 internal class GoFmtSprint(name: String) : GoSupportCode(name) {
-    fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
         translator.needsImport("fmt")
         return Go.CallExpr(
             pos,
@@ -129,63 +127,97 @@ internal class GoFmtSprint(name: String) : GoSupportCode(name) {
     }
 }
 
-private fun supportCodeByOperatorId(id: BuiltinOperatorId): SupportCode? = when (id) {
+internal class GoMathFunc(name: String, private val mathFuncName: String) : GoSupportCode(name) {
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
+        translator.needsImport("math")
+        return Go.CallExpr(
+            pos,
+            fn = Go.SelectorExpr(pos, Go.Ident(pos, "math"), mathFuncName),
+            args = arguments.map { it.expr },
+        )
+    }
+}
+
+@Suppress("MagicNumber")
+private val supportCodeByOperatorId: Map<BuiltinOperatorId, GoSupportCode> = buildMap {
     // Arithmetic
-    BuiltinOperatorId.PlusIntInt, BuiltinOperatorId.PlusIntInt64 -> GoInfixOp("PlusInt", "+")
-    BuiltinOperatorId.PlusFltFlt -> GoInfixOp("PlusFlt", "+")
-    BuiltinOperatorId.MinusIntInt, BuiltinOperatorId.MinusIntInt64 -> GoInfixOp("MinusInt", "-")
-    BuiltinOperatorId.MinusFltFlt -> GoInfixOp("MinusFlt", "-")
-    BuiltinOperatorId.TimesIntInt, BuiltinOperatorId.TimesIntInt64 -> GoInfixOp("TimesInt", "*")
-    BuiltinOperatorId.TimesFltFlt -> GoInfixOp("TimesFlt", "*")
-    BuiltinOperatorId.DivIntInt, BuiltinOperatorId.DivIntInt64,
-    BuiltinOperatorId.DivIntIntSafe, BuiltinOperatorId.DivIntInt64Safe,
-    -> GoInfixOp("DivInt", "/")
-    BuiltinOperatorId.DivFltFlt -> GoInfixOp("DivFlt", "/")
-    BuiltinOperatorId.ModIntInt, BuiltinOperatorId.ModIntInt64,
-    BuiltinOperatorId.ModIntIntSafe, BuiltinOperatorId.ModIntInt64Safe,
-    -> GoInfixOp("ModInt", "%")
-    BuiltinOperatorId.ModFltFlt -> GoInfixOp("ModFlt", "%") // Go doesn't have float %, use math.Mod later
+    for (id in listOf(BuiltinOperatorId.PlusIntInt, BuiltinOperatorId.PlusIntInt64)) {
+        put(id, GoInfixOp("PlusInt", Go.BinOp.Plus))
+    }
+    put(BuiltinOperatorId.PlusFltFlt, GoInfixOp("PlusFlt", Go.BinOp.Plus))
+    for (id in listOf(BuiltinOperatorId.MinusIntInt, BuiltinOperatorId.MinusIntInt64)) {
+        put(id, GoInfixOp("MinusInt", Go.BinOp.Minus))
+    }
+    put(BuiltinOperatorId.MinusFltFlt, GoInfixOp("MinusFlt", Go.BinOp.Minus))
+    for (id in listOf(BuiltinOperatorId.TimesIntInt, BuiltinOperatorId.TimesIntInt64)) {
+        put(id, GoInfixOp("TimesInt", Go.BinOp.Times))
+    }
+    put(BuiltinOperatorId.TimesFltFlt, GoInfixOp("TimesFlt", Go.BinOp.Times))
+    for (id in listOf(
+        BuiltinOperatorId.DivIntInt, BuiltinOperatorId.DivIntInt64,
+        BuiltinOperatorId.DivIntIntSafe, BuiltinOperatorId.DivIntInt64Safe,
+    )) {
+        put(id, GoInfixOp("DivInt", Go.BinOp.Div))
+    }
+    put(BuiltinOperatorId.DivFltFlt, GoInfixOp("DivFlt", Go.BinOp.Div))
+    for (id in listOf(
+        BuiltinOperatorId.ModIntInt, BuiltinOperatorId.ModIntInt64,
+        BuiltinOperatorId.ModIntIntSafe, BuiltinOperatorId.ModIntInt64Safe,
+    )) {
+        put(id, GoInfixOp("ModInt", Go.BinOp.Mod))
+    }
+    put(BuiltinOperatorId.ModFltFlt, GoMathFunc("ModFlt", "Mod"))
+    put(BuiltinOperatorId.PowFltFlt, GoMathFunc("PowFlt", "Pow"))
 
     // Comparison
-    BuiltinOperatorId.LtIntInt, BuiltinOperatorId.LtFltFlt,
-    BuiltinOperatorId.LtStrStr, BuiltinOperatorId.LtGeneric,
-    -> GoInfixOp("Lt", "<")
-    BuiltinOperatorId.LeIntInt, BuiltinOperatorId.LeFltFlt,
-    BuiltinOperatorId.LeStrStr, BuiltinOperatorId.LeGeneric,
-    -> GoInfixOp("Le", "<=")
-    BuiltinOperatorId.GtIntInt, BuiltinOperatorId.GtFltFlt,
-    BuiltinOperatorId.GtStrStr, BuiltinOperatorId.GtGeneric,
-    -> GoInfixOp("Gt", ">")
-    BuiltinOperatorId.GeIntInt, BuiltinOperatorId.GeFltFlt,
-    BuiltinOperatorId.GeStrStr, BuiltinOperatorId.GeGeneric,
-    -> GoInfixOp("Ge", ">=")
-    BuiltinOperatorId.EqIntInt, BuiltinOperatorId.EqFltFlt,
-    BuiltinOperatorId.EqStrStr, BuiltinOperatorId.EqGeneric,
-    -> GoInfixOp("Eq", "==")
-    BuiltinOperatorId.NeIntInt, BuiltinOperatorId.NeFltFlt,
-    BuiltinOperatorId.NeStrStr, BuiltinOperatorId.NeGeneric,
-    -> GoInfixOp("Ne", "!=")
+    for (id in listOf(
+        BuiltinOperatorId.LtIntInt, BuiltinOperatorId.LtFltFlt,
+        BuiltinOperatorId.LtStrStr, BuiltinOperatorId.LtGeneric,
+    )) {
+        put(id, GoInfixOp("Lt", Go.BinOp.Lt))
+    }
+    for (id in listOf(
+        BuiltinOperatorId.LeIntInt, BuiltinOperatorId.LeFltFlt,
+        BuiltinOperatorId.LeStrStr, BuiltinOperatorId.LeGeneric,
+    )) {
+        put(id, GoInfixOp("Le", Go.BinOp.Le))
+    }
+    for (id in listOf(
+        BuiltinOperatorId.GtIntInt, BuiltinOperatorId.GtFltFlt,
+        BuiltinOperatorId.GtStrStr, BuiltinOperatorId.GtGeneric,
+    )) {
+        put(id, GoInfixOp("Gt", Go.BinOp.Gt))
+    }
+    for (id in listOf(
+        BuiltinOperatorId.GeIntInt, BuiltinOperatorId.GeFltFlt,
+        BuiltinOperatorId.GeStrStr, BuiltinOperatorId.GeGeneric,
+    )) {
+        put(id, GoInfixOp("Ge", Go.BinOp.Ge))
+    }
+    for (id in listOf(
+        BuiltinOperatorId.EqIntInt, BuiltinOperatorId.EqFltFlt,
+        BuiltinOperatorId.EqStrStr, BuiltinOperatorId.EqGeneric,
+    )) {
+        put(id, GoInfixOp("Eq", Go.BinOp.Eq))
+    }
+    for (id in listOf(
+        BuiltinOperatorId.NeIntInt, BuiltinOperatorId.NeFltFlt,
+        BuiltinOperatorId.NeStrStr, BuiltinOperatorId.NeGeneric,
+    )) {
+        put(id, GoInfixOp("Ne", Go.BinOp.Ne))
+    }
 
     // Unary
-    BuiltinOperatorId.MinusInt, BuiltinOperatorId.MinusInt64 -> GoUnaryOp("NegInt", "-")
-    BuiltinOperatorId.MinusFlt -> GoUnaryOp("NegFlt", "-")
-    BuiltinOperatorId.BooleanNegation -> GoUnaryOp("Not", "!")
+    for (id in listOf(BuiltinOperatorId.MinusInt, BuiltinOperatorId.MinusInt64)) {
+        put(id, GoUnaryOp("NegInt", Go.UnaryOp.Neg))
+    }
+    put(BuiltinOperatorId.MinusFlt, GoUnaryOp("NegFlt", Go.UnaryOp.Neg))
+    put(BuiltinOperatorId.BooleanNegation, GoUnaryOp("Not", Go.UnaryOp.Not))
 
     // Bitwise
-    BuiltinOperatorId.BitwiseAnd -> GoInfixOp("BitwiseAnd", "&")
-    BuiltinOperatorId.BitwiseOr -> GoInfixOp("BitwiseOr", "|")
+    put(BuiltinOperatorId.BitwiseAnd, GoInfixOp("BitwiseAnd", Go.BinOp.BitwiseAnd))
+    put(BuiltinOperatorId.BitwiseOr, GoInfixOp("BitwiseOr", Go.BinOp.BitwiseOr))
 
     // String
-    BuiltinOperatorId.StrCat -> GoStrCat("StrCat")
-
-    // Not yet implemented
-    BuiltinOperatorId.PowFltFlt,
-    BuiltinOperatorId.CmpFltFlt, BuiltinOperatorId.CmpIntInt,
-    BuiltinOperatorId.CmpStrStr, BuiltinOperatorId.CmpGeneric,
-    BuiltinOperatorId.IsNull, BuiltinOperatorId.NotNull,
-    BuiltinOperatorId.Bubble, BuiltinOperatorId.Panic,
-    BuiltinOperatorId.Print, BuiltinOperatorId.Listify,
-    BuiltinOperatorId.AdaptGeneratorFn, BuiltinOperatorId.SafeAdaptGeneratorFn,
-    BuiltinOperatorId.Async,
-    -> null
+    put(BuiltinOperatorId.StrCat, GoStrCat("StrCat"))
 }

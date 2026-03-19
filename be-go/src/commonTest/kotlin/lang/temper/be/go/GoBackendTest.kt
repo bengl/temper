@@ -47,7 +47,15 @@ class GoBackendTest {
     }
 
     @Test
-    fun returnStmtRenders() {
+    fun returnStmtSingleValue() {
+        assertEquals(
+            "return x",
+            render(Go.ReturnStmt(pos, listOf(Go.Ident(pos, "x")))),
+        )
+    }
+
+    @Test
+    fun returnStmtMultipleValues() {
         assertEquals(
             "return x, nil",
             render(
@@ -79,8 +87,149 @@ class GoBackendTest {
             ),
         )
         val result = render(fn)
-        assert(result.contains("func Hello()")) { "Expected func Hello(), got: $result" }
-        assert(result.contains("fmt.Println")) { "Expected fmt.Println, got: $result" }
+        assertEquals("func Hello() {fmt.Println(\"Hello, World!\")}", result)
+    }
+
+    @Test
+    fun binaryExprRenders() {
+        assertEquals(
+            "x + y",
+            render(Go.BinaryExpr(pos, Go.Ident(pos, "x"), Go.BinOp.Plus, Go.Ident(pos, "y"))),
+        )
+    }
+
+    @Test
+    fun unaryExprRenders() {
+        assertEquals(
+            "-x",
+            render(Go.UnaryExpr(pos, Go.UnaryOp.Neg, Go.Ident(pos, "x"))),
+        )
+        assertEquals(
+            "!done",
+            render(Go.UnaryExpr(pos, Go.UnaryOp.Not, Go.Ident(pos, "done"))),
+        )
+    }
+
+    @Test
+    fun assignStmtRenders() {
+        assertEquals(
+            "x = 5",
+            render(
+                Go.AssignStmt(
+                    pos,
+                    lhs = listOf(Go.Ident(pos, "x")),
+                    rhs = listOf(Go.BasicLit(pos, Go.BasicLitKind.Int, "5")),
+                    op = Go.AssignOp.Assign,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun defineStmtRenders() {
+        assertEquals(
+            "x := 5",
+            render(
+                Go.AssignStmt(
+                    pos,
+                    lhs = listOf(Go.Ident(pos, "x")),
+                    rhs = listOf(Go.BasicLit(pos, Go.BasicLitKind.Int, "5")),
+                    op = Go.AssignOp.Define,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun forStmtWhileStyleRenders() {
+        assertEquals(
+            "for x > 0{x = 1}",
+            render(
+                Go.ForStmt(
+                    pos,
+                    init = null,
+                    cond = Go.BinaryExpr(
+                        pos,
+                        Go.Ident(pos, "x"),
+                        Go.BinOp.Gt,
+                        Go.BasicLit(pos, Go.BasicLitKind.Int, "0"),
+                    ),
+                    post = null,
+                    body = Go.BlockStmt(
+                        pos,
+                        listOf(
+                            Go.AssignStmt(
+                                pos,
+                                lhs = listOf(Go.Ident(pos, "x")),
+                                rhs = listOf(Go.BasicLit(pos, Go.BasicLitKind.Int, "1")),
+                                op = Go.AssignOp.Assign,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun ifStmtRenders() {
+        assertEquals(
+            "if x > 0{return x}",
+            render(
+                Go.IfStmt(
+                    pos,
+                    init = null,
+                    cond = Go.BinaryExpr(
+                        pos,
+                        Go.Ident(pos, "x"),
+                        Go.BinOp.Gt,
+                        Go.BasicLit(pos, Go.BasicLitKind.Int, "0"),
+                    ),
+                    body = Go.BlockStmt(
+                        pos,
+                        listOf(Go.ReturnStmt(pos, listOf(Go.Ident(pos, "x")))),
+                    ),
+                    elseStmt = null,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun ifElseStmtRenders() {
+        assertEquals(
+            "if x > 0{return x} else {return y}",
+            render(
+                Go.IfStmt(
+                    pos,
+                    init = null,
+                    cond = Go.BinaryExpr(
+                        pos,
+                        Go.Ident(pos, "x"),
+                        Go.BinOp.Gt,
+                        Go.BasicLit(pos, Go.BasicLitKind.Int, "0"),
+                    ),
+                    body = Go.BlockStmt(
+                        pos,
+                        listOf(Go.ReturnStmt(pos, listOf(Go.Ident(pos, "x")))),
+                    ),
+                    elseStmt = Go.BlockStmt(
+                        pos,
+                        listOf(Go.ReturnStmt(pos, listOf(Go.Ident(pos, "y")))),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun goEscapeStringHandlesSpecialChars() {
+        assertEquals("hello", GoTranslator.goEscapeString("hello"))
+        assertEquals("line1\\nline2", GoTranslator.goEscapeString("line1\nline2"))
+        assertEquals("tab\\there", GoTranslator.goEscapeString("tab\there"))
+        assertEquals("say \\\"hi\\\"", GoTranslator.goEscapeString("say \"hi\""))
+        assertEquals("back\\\\slash", GoTranslator.goEscapeString("back\\slash"))
+        assertEquals("cr\\r", GoTranslator.goEscapeString("cr\r"))
     }
 
     @Test

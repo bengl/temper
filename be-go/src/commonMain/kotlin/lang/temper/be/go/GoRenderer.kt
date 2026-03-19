@@ -28,8 +28,8 @@ object GoRenderer {
             is Go.IndexExpr -> {
                 renderExpr(node.x, sink); sink.bracket("["); renderExpr(node.index, sink); sink.bracket("]")
             }
-            is Go.BinaryExpr -> { renderExpr(node.x, sink); sink.infixOp(node.op); renderExpr(node.y, sink) }
-            is Go.UnaryExpr -> { sink.prefixOp(node.op); renderExpr(node.x, sink) }
+            is Go.BinaryExpr -> { renderExpr(node.x, sink); sink.infixOp(node.op.symbol); renderExpr(node.y, sink) }
+            is Go.UnaryExpr -> { sink.prefixOp(node.op.symbol); renderExpr(node.x, sink) }
             is Go.CompositeLit -> renderCompositeLit(node, sink)
             is Go.StarExpr -> { sink.punct("*"); renderExpr(node.x, sink) }
             is Go.AddressExpr -> { sink.punct("&"); renderExpr(node.x, sink) }
@@ -163,8 +163,7 @@ object GoRenderer {
     private fun renderReturnStmt(stmt: Go.ReturnStmt, sink: TokenSink) {
         sink.keyword("return")
         stmt.results.forEachIndexed { i, e ->
-            sink.ws()
-            if (i > 0) { sink.punct(","); sink.ws() }
+            if (i > 0) { sink.punct(","); sink.ws() } else { sink.ws() }
             renderExpr(e, sink)
         }
         sink.endLine()
@@ -175,8 +174,16 @@ object GoRenderer {
         stmt.init?.let { sink.ws(); render(it, sink); sink.punct(";") }
         sink.ws(); renderExpr(stmt.cond, sink); sink.ws()
         renderBlockStmt(stmt.body, sink)
-        stmt.elseStmt?.let { sink.ws(); sink.keyword("else"); sink.ws(); render(it, sink) }
-        sink.endLine()
+        val elseBranch = stmt.elseStmt
+        if (elseBranch != null) {
+            sink.ws(); sink.keyword("else"); sink.ws()
+            when (elseBranch) {
+                is Go.BlockStmt -> { renderBlockStmt(elseBranch, sink); sink.endLine() }
+                is Go.IfStmt -> renderIfStmt(elseBranch, sink) // recursion emits endLine
+            }
+        } else {
+            sink.endLine()
+        }
     }
 
     private fun renderAssignStmt(stmt: Go.AssignStmt, sink: TokenSink) {

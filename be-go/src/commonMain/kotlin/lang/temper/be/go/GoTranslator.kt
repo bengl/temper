@@ -4,8 +4,12 @@ import lang.temper.be.Backend
 import lang.temper.be.tmpl.SupportCode
 import lang.temper.be.tmpl.TmpL
 import lang.temper.be.tmpl.TypedArg
+import lang.temper.common.Log
 import lang.temper.common.MimeType
 import lang.temper.format.toStringViaTokenSink
+import lang.temper.log.LogSink
+import lang.temper.log.MessageTemplate
+import lang.temper.log.Position
 import lang.temper.name.ImplicitsCodeLocation
 import lang.temper.name.ResolvedName
 import lang.temper.name.ResolvedParsedName
@@ -23,14 +27,15 @@ import lang.temper.value.TVoid
  * like hello-world and fibonacci.
  */
 class GoTranslator(
-    val module: TmpL.Module,
+    internal val module: TmpL.Module,
+    private val logSink: LogSink = LogSink.devNull,
 ) {
     private val imports = mutableSetOf<String>()
     private val initStmts = mutableListOf<Go.Stmt>()
     private val topLevelFuncs = mutableListOf<Go.FuncDecl>()
     private val supportCodeByName = mutableMapOf<ResolvedName, SupportCode>()
 
-    fun needsImport(pkg: String) {
+    internal fun needsImport(pkg: String) {
         imports.add(pkg)
     }
 
@@ -85,7 +90,10 @@ class GoTranslator(
             is TmpL.ModuleLevelDeclaration -> processModuleLevelDeclaration(topLevel)
             is TmpL.SupportCodeDeclaration -> {} // Already collected in first pass
             is TmpL.ModuleFunctionDeclaration -> processModuleFunctionDeclaration(topLevel)
-            else -> {} // Skip other top levels
+            else -> logCannotTranslate(
+                topLevel.pos,
+                "Go backend: unsupported top-level node ${topLevel::class.simpleName}",
+            )
         }
     }
 
@@ -103,14 +111,20 @@ class GoTranslator(
 
     private fun processModuleFunctionDeclaration(decl: TmpL.ModuleFunctionDeclaration) {
         val pos = decl.pos
-        val nameText = nameToString(decl.name.name) ?: return
+        val nameText = nameToString(decl.name.name) ?: run {
+            logCannotTranslate(pos, "Go backend: cannot resolve function name")
+            return
+        }
 
         // Translate parameters (skip `this` parameter if present).
         val params = decl.parameters.parameters.mapNotNull { formal ->
             // Skip `this` parameter — Go top-level functions have no receiver here.
             if (formal.name == decl.parameters.thisName) return@mapNotNull null
             val formalName = nameToString(formal.name.name) ?: return@mapNotNull null
-            val formalType = translateAType(formal.type) ?: Go.NamedType(pos, "any")
+            val formalType = translateAType(formal.type) ?: run {
+                logCannotTranslate(pos, "Go backend: falling back to 'any' for parameter '$formalName'")
+                Go.NamedType(pos, "any")
+            }
             Go.Field(pos, name = formalName, type = formalType)
         }
 
@@ -149,10 +163,16 @@ class GoTranslator(
                     WellKnownTypes.stringTypeDefinition -> Go.NamedType(pos, "string")
                     WellKnownTypes.float64TypeDefinition -> Go.NamedType(pos, "float64")
                     WellKnownTypes.voidTypeDefinition -> null // void -> no return type
-                    else -> null // unsupported type
+                    else -> {
+                        logCannotTranslate(pos, "Go backend: unsupported type ${typeDef.name}")
+                        null
+                    }
                 }
             }
-            else -> null
+            else -> {
+                logCannotTranslate(pos, "Go backend: unsupported type form ${type::class.simpleName}")
+                null
+            }
         }
     }
 
@@ -188,7 +208,13 @@ class GoTranslator(
             is TmpL.Assignment -> translateAssignment(statement)
             is TmpL.WhileStatement -> translateWhileStatement(statement)
             is TmpL.IfStatement -> translateIfStatement(statement)
-            else -> null // Skip unhandled statements
+            else -> {
+                logCannotTranslate(
+                    statement.pos,
+                    "Go backend: unsupported statement ${statement::class.simpleName}",
+                )
+                null
+            }
         }
     }
 
@@ -214,7 +240,10 @@ class GoTranslator(
     private fun translateAssignment(statement: TmpL.Assignment): Go.Stmt? {
         val pos = statement.pos
         val nameText = nameToString(statement.left.name) ?: return null
-        val right = statement.right as? TmpL.Expression ?: return null
+        val right = statement.right as? TmpL.Expression ?: run {
+            logCannotTranslate(pos, "Go backend: assignment RHS is not an expression")
+            return null
+        }
         val rightExpr = translateExpression(right) ?: return null
         return Go.AssignStmt(
             pos,
@@ -245,7 +274,13 @@ class GoTranslator(
             null -> Go.BlockStmt(pos, emptyList())
             else -> Go.BlockStmt(pos, listOf(consequentStmt))
         }
-        val elseStmt = statement.alternate?.let { translateStatement(it) }
+        val elseStmt = statement.alternate?.let { alt ->
+            when (val s = translateStatement(alt)) {
+                is Go.ElseBranch -> s
+                null -> null
+                else -> Go.BlockStmt(pos, listOf(s))
+            }
+        }
         return Go.IfStmt(pos, init = null, cond = cond, body = consequentBlock, elseStmt = elseStmt)
     }
 
@@ -259,7 +294,10 @@ class GoTranslator(
             is TmpL.CallExpression -> translateCallExpression(expression)
             is TmpL.ValueReference -> translateValueReference(expression)
             is TmpL.Reference -> translateReference(expression)
-            else -> null // Skip unhandled expressions
+            else -> {
+                logCannotTranslate(expression.pos, "Go backend: unsupported expression ${expression::class.simpleName}")
+                null
+            }
         }
     }
 
@@ -279,29 +317,29 @@ class GoTranslator(
             is TmpL.FnReference -> {
                 val callee = translateCallable(fn) ?: return null
                 val args = call.parameters.map { actual ->
-                    translateExpression(actual as TmpL.Expression) ?: Go.Ident(call.pos, "_")
+                    translateExpression(actual as TmpL.Expression) ?: return null
                 }
                 Go.CallExpr(call.pos, fn = callee, args = args)
             }
-            else -> null
+            else -> {
+                logCannotTranslate(call.pos, "Go backend: unsupported callable ${fn::class.simpleName}")
+                null
+            }
         }
     }
 
     private fun inlineGoSupportCode(call: TmpL.CallExpression, supportCode: GoSupportCode): Go.Expr? {
         val pos = call.pos
         val args = call.parameters.map { actual ->
-            val expr = translateExpression(actual as TmpL.Expression) ?: Go.Ident(pos, "_")
-            TypedArg(expr, (actual as TmpL.Expression).type)
+            val typedExpr = actual as TmpL.Expression
+            val expr = translateExpression(typedExpr)
+            if (expr == null) {
+                logCannotTranslate(pos, "Go backend: cannot translate argument in ${supportCode.connectedKey}")
+                return null
+            }
+            TypedArg(expr, typedExpr.type)
         }
-        return when (supportCode) {
-            is GoConsoleLog -> supportCode.inlineToGo(pos, args, this)
-            is GoGetConsole -> supportCode.inlineToGo(pos, this)
-            is GoInfixOp -> supportCode.inlineToGo(pos, args)
-            is GoUnaryOp -> supportCode.inlineToGo(pos, args)
-            is GoStrCat -> supportCode.inlineToGo(pos, args)
-            is GoFmtSprint -> supportCode.inlineToGo(pos, args, this)
-            else -> null
-        }
+        return supportCode.inlineToGo(pos, args, this)
     }
 
     private fun translateCallable(callable: TmpL.Callable): Go.Expr? {
@@ -310,7 +348,10 @@ class GoTranslator(
                 val nameText = nameToString(callable.id.name) ?: return null
                 Go.Ident(callable.pos, nameText)
             }
-            else -> null
+            else -> {
+                logCannotTranslate(callable.pos, "Go backend: unsupported callable ${callable::class.simpleName}")
+                null
+            }
         }
     }
 
@@ -346,7 +387,10 @@ class GoTranslator(
             }
             TNull -> Go.Ident(pos, "nil")
             TVoid -> null
-            else -> null
+            else -> {
+                logCannotTranslate(pos, "Go backend: unsupported value type ${expression.value.typeTag}")
+                null
+            }
         }
     }
 
@@ -355,8 +399,17 @@ class GoTranslator(
         return Go.Ident(expression.pos, nameText)
     }
 
+    private fun logCannotTranslate(pos: Position, diagnostic: String) {
+        logSink.log(
+            level = Log.Error,
+            template = MessageTemplate.CannotTranslate,
+            pos = pos,
+            values = listOf(diagnostic),
+        )
+    }
+
     companion object {
-        private fun goEscapeString(s: String): String {
+        internal fun goEscapeString(s: String): String {
             val sb = StringBuilder()
             for (c in s) {
                 when (c) {

@@ -33,7 +33,7 @@ class GoBackend(setup: BackendSetup<GoBackend>) : Backend<GoBackend>(Factory.bac
         return buildList {
             // Translate each module.
             for (module in modules) {
-                val translator = GoTranslator(module)
+                val translator = GoTranslator(module, logSink)
                 add(translator.translateModule())
             }
             // Generate go.mod file.

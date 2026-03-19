@@ -60,10 +60,19 @@ object Go {
 
     // ── Statements ────────────────────────────────────────────────────────────
 
+    /** Marker for nodes valid as an else branch in Go (BlockStmt or IfStmt). */
+    sealed interface ElseBranch
+
     sealed class Stmt(pos: Position) : Node(pos)
-    class BlockStmt(pos: Position, val stmts: List<Stmt>) : Stmt(pos)
+    class BlockStmt(pos: Position, val stmts: List<Stmt>) : Stmt(pos), ElseBranch
     class ReturnStmt(pos: Position, val results: List<Expr>) : Stmt(pos)
-    class IfStmt(pos: Position, val init: Stmt?, val cond: Expr, val body: BlockStmt, val elseStmt: Stmt?) : Stmt(pos)
+    class IfStmt(
+        pos: Position,
+        val init: Stmt?,
+        val cond: Expr,
+        val body: BlockStmt,
+        val elseStmt: ElseBranch?,
+    ) : Stmt(pos), ElseBranch
     class AssignStmt(pos: Position, val lhs: List<Expr>, val rhs: List<Expr>, val op: AssignOp) : Stmt(pos)
     enum class AssignOp { Assign, Define }
     class ExprStmt(pos: Position, val expr: Expr) : Stmt(pos)
@@ -81,8 +90,19 @@ object Go {
     class SelectorExpr(pos: Position, val x: Expr, val sel: String) : Expr(pos)
     class CallExpr(pos: Position, val fn: Expr, val args: List<Expr>) : Expr(pos)
     class IndexExpr(pos: Position, val x: Expr, val index: Expr) : Expr(pos)
-    class BinaryExpr(pos: Position, val x: Expr, val op: String, val y: Expr) : Expr(pos)
-    class UnaryExpr(pos: Position, val op: String, val x: Expr) : Expr(pos)
+    class BinaryExpr(pos: Position, val x: Expr, val op: BinOp, val y: Expr) : Expr(pos)
+    class UnaryExpr(pos: Position, val op: UnaryOp, val x: Expr) : Expr(pos)
+
+    enum class BinOp(val symbol: String) {
+        Plus("+"), Minus("-"), Times("*"), Div("/"), Mod("%"),
+        Eq("=="), Ne("!="), Lt("<"), Le("<="), Gt(">"), Ge(">="),
+        And("&&"), Or("||"),
+        BitwiseAnd("&"), BitwiseOr("|"),
+    }
+
+    enum class UnaryOp(val symbol: String) {
+        Neg("-"), Not("!"),
+    }
     class CompositeLit(pos: Position, val type: TypeExpr?, val elts: List<Expr>) : Expr(pos)
     class StarExpr(pos: Position, val x: Expr) : Expr(pos)
     class AddressExpr(pos: Position, val x: Expr) : Expr(pos)

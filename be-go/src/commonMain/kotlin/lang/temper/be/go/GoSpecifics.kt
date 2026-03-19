@@ -4,12 +4,15 @@ import lang.temper.be.Dependencies
 import lang.temper.be.cli.Aux
 import lang.temper.be.cli.CliEnv
 import lang.temper.be.cli.CliFailure
+import lang.temper.be.cli.EXIT_UNAVAILABLE
+import lang.temper.be.cli.Effort
 import lang.temper.be.cli.EffortSuccess
 import lang.temper.be.cli.RunnerSpecifics
 import lang.temper.be.cli.ToolchainRequest
 import lang.temper.be.cli.ToolchainResult
 import lang.temper.be.cli.VersionedTool
 import lang.temper.be.cli.checkMin
+import lang.temper.common.RFailure
 import lang.temper.common.RResult
 import lang.temper.fs.OutDir
 import lang.temper.log.FilePath
@@ -24,7 +27,12 @@ object GoSpecifics : RunnerSpecifics {
         code: String,
         env: Map<String, String>,
         aux: Map<Aux, FilePath>,
-    ): RResult<EffortSuccess, CliFailure> = TODO("Not yet implemented")
+    ): RResult<EffortSuccess, CliFailure> = RFailure(
+        CliFailure(
+            message = "Go backend does not yet support single-source execution",
+            effort = Effort(exitCode = EXIT_UNAVAILABLE, cliEnv = cliEnv),
+        ),
+    )
 
     override fun runBestEffort(
         cliEnv: CliEnv,
