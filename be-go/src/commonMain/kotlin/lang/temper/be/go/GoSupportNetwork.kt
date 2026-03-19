@@ -80,7 +80,7 @@ internal object GoConsoleLog : GoSupportCode("Console::log") {
 internal object GoGetConsole : GoSupportCode("::getConsole") {
     fun inlineToGo(
         pos: Position,
-        translator: GoTranslator,
+        @Suppress("UnusedParameter") translator: GoTranslator,
     ): Go.Expr {
         // The console object itself is not needed in Go; just return a placeholder
         return Go.Ident(pos, "_console")

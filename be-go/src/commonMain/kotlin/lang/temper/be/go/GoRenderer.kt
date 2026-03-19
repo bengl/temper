@@ -1,3 +1,5 @@
+@file:Suppress("Wrapping")
+
 package lang.temper.be.go
 
 import lang.temper.format.OutputToken

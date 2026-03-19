@@ -21,7 +21,7 @@ import lang.temper.name.DashedIdentifier
 
 internal fun runGo(
     cliEnv: CliEnv,
-    dependencies: Dependencies<GoBackend>,
+    @Suppress("UnusedParameter") dependencies: Dependencies<GoBackend>,
     request: ToolchainRequest,
 ): List<ToolchainResult> = when (request) {
     is RunLibraryRequest -> cliEnv.runLibrary(request)

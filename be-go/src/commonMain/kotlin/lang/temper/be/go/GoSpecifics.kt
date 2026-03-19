@@ -48,5 +48,6 @@ object GoCommand : VersionedTool {
         return SemVer(versionString).checkMin(run, minVersion)
     }
 
+    @Suppress("MagicNumber")
     val minVersion = SemVer(1, 18, 0)
 }
