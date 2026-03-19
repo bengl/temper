@@ -26,16 +26,28 @@ internal fun runGo(
 ): List<ToolchainResult> = when (request) {
     is RunLibraryRequest -> cliEnv.runLibrary(request)
     is RunTestsRequest ->
-        listOf(ToolchainResult(result = RFailure(CliFailure(
-            message = "Go backend does not yet support running tests",
-            effort = Effort(exitCode = EXIT_UNAVAILABLE, cliEnv = cliEnv),
-        ))))
+        listOf(
+            ToolchainResult(
+                result = RFailure(
+                    CliFailure(
+                        message = "Go backend does not yet support running tests",
+                        effort = Effort(exitCode = EXIT_UNAVAILABLE, cliEnv = cliEnv),
+                    ),
+                ),
+            ),
+        )
     is RunBackendSpecificCompilationStepRequest -> error(request)
     is ExecInteractiveRepl ->
-        listOf(ToolchainResult(result = RFailure(CliFailure(
-            message = "Go backend does not support interactive shell",
-            effort = Effort(exitCode = EXIT_UNAVAILABLE, cliEnv = cliEnv),
-        ))))
+        listOf(
+            ToolchainResult(
+                result = RFailure(
+                    CliFailure(
+                        message = "Go backend does not support interactive shell",
+                        effort = Effort(exitCode = EXIT_UNAVAILABLE, cliEnv = cliEnv),
+                    ),
+                ),
+            ),
+        )
 }.also { results ->
     if (results.any { it.result is RFailure }) {
         cliEnv.maybeFreeze()

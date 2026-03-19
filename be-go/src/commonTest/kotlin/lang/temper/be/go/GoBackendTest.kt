@@ -24,26 +24,36 @@ class GoBackendTest {
 
     @Test
     fun selectorExprRenders() {
-        assertEquals("fmt.Println", render(
-            Go.SelectorExpr(pos, Go.Ident(pos, "fmt"), "Println")
-        ))
+        assertEquals(
+            "fmt.Println",
+            render(
+                Go.SelectorExpr(pos, Go.Ident(pos, "fmt"), "Println"),
+            ),
+        )
     }
 
     @Test
     fun callExprRenders() {
-        assertEquals("fmt.Println(\"hello\")", render(
-            Go.CallExpr(pos,
-                Go.SelectorExpr(pos, Go.Ident(pos, "fmt"), "Println"),
-                listOf(Go.BasicLit(pos, Go.BasicLitKind.String, "\"hello\""))
-            )
-        ))
+        assertEquals(
+            "fmt.Println(\"hello\")",
+            render(
+                Go.CallExpr(
+                    pos,
+                    Go.SelectorExpr(pos, Go.Ident(pos, "fmt"), "Println"),
+                    listOf(Go.BasicLit(pos, Go.BasicLitKind.String, "\"hello\"")),
+                ),
+            ),
+        )
     }
 
     @Test
     fun returnStmtRenders() {
-        assertEquals("return x, nil", render(
-            Go.ReturnStmt(pos, listOf(Go.Ident(pos, "x"), Go.Ident(pos, "nil")))
-        ))
+        assertEquals(
+            "return x, nil",
+            render(
+                Go.ReturnStmt(pos, listOf(Go.Ident(pos, "x"), Go.Ident(pos, "nil"))),
+            ),
+        )
     }
 
     @Test
@@ -54,12 +64,19 @@ class GoBackendTest {
             receiver = null,
             params = emptyList(),
             results = emptyList(),
-            body = Go.BlockStmt(pos, listOf(
-                Go.ExprStmt(pos, Go.CallExpr(pos,
-                    Go.SelectorExpr(pos, Go.Ident(pos, "fmt"), "Println"),
-                    listOf(Go.BasicLit(pos, Go.BasicLitKind.String, "\"Hello, World!\""))
-                ))
-            ))
+            body = Go.BlockStmt(
+                pos,
+                listOf(
+                    Go.ExprStmt(
+                        pos,
+                        Go.CallExpr(
+                            pos,
+                            Go.SelectorExpr(pos, Go.Ident(pos, "fmt"), "Println"),
+                            listOf(Go.BasicLit(pos, Go.BasicLitKind.String, "\"Hello, World!\"")),
+                        ),
+                    ),
+                ),
+            ),
         )
         val result = render(fn)
         assert(result.contains("func Hello()")) { "Expected func Hello(), got: $result" }
