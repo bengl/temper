@@ -3,6 +3,7 @@ package lang.temper.be.go
 import lang.temper.be.Backend
 import lang.temper.be.tmpl.SupportCode
 import lang.temper.be.tmpl.TmpL
+import lang.temper.be.tmpl.TmpLOperator
 import lang.temper.be.tmpl.TypedArg
 import lang.temper.common.Log
 import lang.temper.common.MimeType
@@ -13,6 +14,7 @@ import lang.temper.log.Position
 import lang.temper.name.ImplicitsCodeLocation
 import lang.temper.name.ResolvedName
 import lang.temper.name.ResolvedParsedName
+import lang.temper.name.Temporary
 import lang.temper.type.WellKnownTypes
 import lang.temper.value.TBoolean
 import lang.temper.value.TFloat64
@@ -34,6 +36,21 @@ class GoTranslator(
     private val initStmts = mutableListOf<Go.Stmt>()
     private val topLevelFuncs = mutableListOf<Go.FuncDecl>()
     private val supportCodeByName = mutableMapOf<ResolvedName, SupportCode>()
+
+    /** Tracks variable names declared in nested scopes to avoid duplicate `:=`. */
+    private val scopeStack = mutableListOf(mutableSetOf<String>())
+
+    /** Check if a variable has been declared in the current or any enclosing scope. */
+    private fun isDeclared(name: String): Boolean = scopeStack.any { name in it }
+
+    /** Mark a variable as declared in the current (innermost) scope. */
+    private fun markDeclared(name: String) { scopeStack.last().add(name) }
+
+    /** Enter a new scope. */
+    private fun pushScope() { scopeStack.add(mutableSetOf()) }
+
+    /** Leave the current scope. */
+    private fun popScope() { scopeStack.removeAt(scopeStack.lastIndex) }
 
     internal fun needsImport(pkg: String) {
         imports.add(pkg)
@@ -133,8 +150,10 @@ class GoTranslator(
         val results = if (returnType != null) listOf(returnType) else emptyList()
 
         // Translate body.
+        pushScope()
         val bodyStmts = mutableListOf<Go.Stmt>()
         processStatements(decl.body.statements, bodyStmts)
+        popScope()
 
         val funcDecl = Go.FuncDecl(
             pos,
@@ -196,8 +215,10 @@ class GoTranslator(
         return when (statement) {
             is TmpL.ExpressionStatement -> translateExpressionStatement(statement)
             is TmpL.BlockStatement -> {
+                pushScope()
                 val stmts = mutableListOf<Go.Stmt>()
                 processStatements(statement.statements, stmts)
+                popScope()
                 Go.BlockStmt(statement.pos, stmts)
             }
             is TmpL.ReturnStatement -> {
@@ -208,6 +229,9 @@ class GoTranslator(
             is TmpL.Assignment -> translateAssignment(statement)
             is TmpL.WhileStatement -> translateWhileStatement(statement)
             is TmpL.IfStatement -> translateIfStatement(statement)
+            is TmpL.LabeledStatement -> translateLabeledStatement(statement)
+            is TmpL.BreakStatement -> translateBreakStatement(statement)
+            is TmpL.ContinueStatement -> translateContinueStatement(statement)
             else -> {
                 logCannotTranslate(
                     statement.pos,
@@ -222,18 +246,26 @@ class GoTranslator(
         val pos = decl.pos
         val nameText = nameToString(decl.name.name) ?: return null
         val initExpr = decl.init?.let { translateExpression(it) }
-        // Use `:=` short variable declaration if we have an initializer (simpler for local vars).
+        val alreadyDeclared = isDeclared(nameText)
+        markDeclared(nameText)
+        // Use `:=` short variable declaration if we have an initializer and the variable is new.
+        // Use `=` assignment if the variable was already declared in the same scope.
         // Use `var` declaration if no initializer.
         return if (initExpr != null) {
             Go.AssignStmt(
                 pos,
                 lhs = listOf(Go.Ident(pos, nameText)),
                 rhs = listOf(initExpr),
-                op = Go.AssignOp.Define,
+                op = if (alreadyDeclared) Go.AssignOp.Assign else Go.AssignOp.Define,
             )
         } else {
-            val typeExpr = decl.type.privOtOrNull?.let { translateType(it, pos) }
-            Go.DeclStmt(pos, Go.VarDecl(pos, nameText, typeExpr, null))
+            if (alreadyDeclared) {
+                // Variable already declared; skip redundant declaration.
+                null
+            } else {
+                val typeExpr = decl.type.privOtOrNull?.let { translateType(it, pos) }
+                Go.DeclStmt(pos, Go.VarDecl(pos, nameText, typeExpr, null))
+            }
         }
     }
 
@@ -256,7 +288,9 @@ class GoTranslator(
     private fun translateWhileStatement(statement: TmpL.WhileStatement): Go.Stmt? {
         val pos = statement.pos
         val cond = translateExpression(statement.test) ?: return null
+        pushScope()
         val bodyStmt = translateStatement(statement.body)
+        popScope()
         val bodyBlock = when (bodyStmt) {
             is Go.BlockStmt -> bodyStmt
             null -> Go.BlockStmt(pos, emptyList())
@@ -268,14 +302,19 @@ class GoTranslator(
     private fun translateIfStatement(statement: TmpL.IfStatement): Go.Stmt? {
         val pos = statement.pos
         val cond = translateExpression(statement.test) ?: return null
+        pushScope()
         val consequentStmt = translateStatement(statement.consequent)
+        popScope()
         val consequentBlock = when (consequentStmt) {
             is Go.BlockStmt -> consequentStmt
             null -> Go.BlockStmt(pos, emptyList())
             else -> Go.BlockStmt(pos, listOf(consequentStmt))
         }
         val elseStmt = statement.alternate?.let { alt ->
-            when (val s = translateStatement(alt)) {
+            pushScope()
+            val s = translateStatement(alt)
+            popScope()
+            when (s) {
                 is Go.ElseBranch -> s
                 null -> null
                 else -> Go.BlockStmt(pos, listOf(s))
@@ -284,8 +323,59 @@ class GoTranslator(
         return Go.IfStmt(pos, init = null, cond = cond, body = consequentBlock, elseStmt = elseStmt)
     }
 
+    private fun translateLabeledStatement(statement: TmpL.LabeledStatement): Go.Stmt? {
+        val pos = statement.pos
+        val labelName = nameToString(statement.label.id.name) ?: return null
+        pushScope()
+        val innerStmt = translateStatement(statement.statement)
+        popScope()
+        innerStmt ?: return null
+
+        // In Go, `break` only works with for/switch/select. If the inner statement is already
+        // a ForStmt, just label it directly. Otherwise, wrap in a `for { ...; break }` loop
+        // so that break statements targeting this label can exit the block.
+        return if (innerStmt is Go.ForStmt) {
+            Go.LabeledStmt(pos, labelName, innerStmt)
+        } else {
+            // Wrap in `label: for { body; break label }` — the body already has break
+            // statements that exit, and we add a trailing break for fall-through.
+            val bodyStmts = when (innerStmt) {
+                is Go.BlockStmt -> innerStmt.stmts.toMutableList()
+                else -> mutableListOf(innerStmt)
+            }
+            // Add a trailing break if the last statement isn't already a break or return.
+            val lastStmt = bodyStmts.lastOrNull()
+            if (lastStmt !is Go.BreakStmt && lastStmt !is Go.ReturnStmt) {
+                bodyStmts.add(Go.BreakStmt(pos, labelName))
+            }
+            val forLoop = Go.ForStmt(
+                pos,
+                init = null,
+                cond = null,
+                post = null,
+                body = Go.BlockStmt(pos, bodyStmts),
+            )
+            Go.LabeledStmt(pos, labelName, forLoop)
+        }
+    }
+
+    private fun translateBreakStatement(statement: TmpL.BreakStatement): Go.Stmt {
+        val label = statement.label?.let { nameToString(it.id.name) }
+        return Go.BreakStmt(statement.pos, label)
+    }
+
+    private fun translateContinueStatement(statement: TmpL.ContinueStatement): Go.Stmt {
+        val label = statement.label?.let { nameToString(it.id.name) }
+        return Go.ContinueStmt(statement.pos, label)
+    }
+
     private fun translateExpressionStatement(statement: TmpL.ExpressionStatement): Go.Stmt? {
-        val expr = translateExpression(statement.expression) ?: return null
+        val expr = translateExpression(statement.expression)
+        if (expr == null) {
+            val exprType = statement.expression::class.simpleName
+            logCannotTranslate(statement.pos, "Go backend: cannot translate expression $exprType")
+            return null
+        }
         return Go.ExprStmt(statement.pos, expr)
     }
 
@@ -294,6 +384,7 @@ class GoTranslator(
             is TmpL.CallExpression -> translateCallExpression(expression)
             is TmpL.ValueReference -> translateValueReference(expression)
             is TmpL.Reference -> translateReference(expression)
+            is TmpL.InfixOperation -> translateInfixOperation(expression)
             else -> {
                 logCannotTranslate(expression.pos, "Go backend: unsupported expression ${expression::class.simpleName}")
                 null
@@ -356,9 +447,39 @@ class GoTranslator(
     }
 
     internal fun nameToString(name: lang.temper.name.TemperName): String? {
-        return when (name) {
+        val raw = when (name) {
             is ResolvedParsedName -> name.baseName.nameText
+            is Temporary -> "${name.nameHint}_${name.uid}"
             else -> name.rawDiagnostic
+        }
+        return raw?.let { escapeGoKeyword(it) }
+    }
+
+    companion object {
+        private val goKeywords = setOf(
+            "break", "case", "chan", "const", "continue",
+            "default", "defer", "else", "fallthrough", "for",
+            "func", "go", "goto", "if", "import",
+            "interface", "map", "package", "range", "return",
+            "select", "struct", "switch", "type", "var",
+        )
+
+        internal fun escapeGoKeyword(name: String): String =
+            if (name in goKeywords) "${name}_" else name
+
+        internal fun goEscapeString(s: String): String {
+            val sb = StringBuilder()
+            for (c in s) {
+                when (c) {
+                    '\\' -> sb.append("\\\\")
+                    '"' -> sb.append("\\\"")
+                    '\n' -> sb.append("\\n")
+                    '\r' -> sb.append("\\r")
+                    '\t' -> sb.append("\\t")
+                    else -> sb.append(c)
+                }
+            }
+            return sb.toString()
         }
     }
 
@@ -399,6 +520,21 @@ class GoTranslator(
         return Go.Ident(expression.pos, nameText)
     }
 
+    private fun translateInfixOperation(expression: TmpL.InfixOperation): Go.Expr? {
+        val pos = expression.pos
+        val left = translateExpression(expression.left) ?: return null
+        val right = translateExpression(expression.right) ?: return null
+        val op = when (expression.op.tmpLOperator) {
+            TmpLOperator.AmpAmp -> Go.BinOp.And
+            TmpLOperator.BarBar -> Go.BinOp.Or
+            else -> {
+                logCannotTranslate(pos, "Go backend: unsupported infix operator ${expression.op.tmpLOperator}")
+                return null
+            }
+        }
+        return Go.BinaryExpr(pos, left, op, right)
+    }
+
     private fun logCannotTranslate(pos: Position, diagnostic: String) {
         logSink.log(
             level = Log.Error,
@@ -406,22 +542,5 @@ class GoTranslator(
             pos = pos,
             values = listOf(diagnostic),
         )
-    }
-
-    companion object {
-        internal fun goEscapeString(s: String): String {
-            val sb = StringBuilder()
-            for (c in s) {
-                when (c) {
-                    '\\' -> sb.append("\\\\")
-                    '"' -> sb.append("\\\"")
-                    '\n' -> sb.append("\\n")
-                    '\r' -> sb.append("\\r")
-                    '\t' -> sb.append("\\t")
-                    else -> sb.append(c)
-                }
-            }
-            return sb.toString()
-        }
     }
 }

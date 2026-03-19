@@ -23,6 +23,11 @@ class GoFunctionalTest : FunctionalTestRunner<GoBackend>(GoBackend.Factory) {
         super.algosHelloWorld()
     }
 
+    @Test
+    override fun controlFlowLoops() {
+        super.controlFlowLoops()
+    }
+
     override fun runGeneratedCode(
         backend: GoBackend,
         modules: List<Module>,

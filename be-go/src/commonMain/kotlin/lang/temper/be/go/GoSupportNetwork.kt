@@ -112,7 +112,11 @@ internal class GoUnaryOp(
 
 internal class GoStrCat(name: String) : GoSupportCode(name) {
     override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
-        return Go.BinaryExpr(pos, arguments[0].expr, Go.BinOp.Plus, arguments[1].expr)
+        // StrCat can take variable number of arguments (from string interpolation).
+        // Chain them as binary `+` operations: a + b + c + ...
+        return arguments.map { it.expr }.reduce { acc, expr ->
+            Go.BinaryExpr(pos, acc, Go.BinOp.Plus, expr)
+        }
     }
 }
 

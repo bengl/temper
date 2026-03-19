@@ -81,6 +81,15 @@ object Go {
     /** Go `for` statement — covers while-loops by leaving init/post null. */
     class ForStmt(pos: Position, val init: Stmt?, val cond: Expr?, val post: Stmt?, val body: BlockStmt) : Stmt(pos)
 
+    /** Labeled statement: `label: stmt`. Used to wrap for-loops that can be broken out of. */
+    class LabeledStmt(pos: Position, val label: String, val stmt: Stmt) : Stmt(pos)
+
+    /** Break statement: `break` or `break label`. */
+    class BreakStmt(pos: Position, val label: String?) : Stmt(pos)
+
+    /** Continue statement: `continue` or `continue label`. */
+    class ContinueStmt(pos: Position, val label: String?) : Stmt(pos)
+
     // ── Expressions ───────────────────────────────────────────────────────────
 
     sealed class Expr(pos: Position) : Node(pos)

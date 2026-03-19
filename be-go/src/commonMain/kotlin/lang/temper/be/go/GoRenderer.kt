@@ -21,6 +21,9 @@ object GoRenderer {
             is Go.ExprStmt -> { renderExpr(node.expr, sink); sink.endLine() }
             is Go.DeclStmt -> renderVarDecl(node.decl, sink)
             is Go.ForStmt -> renderForStmt(node, sink)
+            is Go.LabeledStmt -> renderLabeledStmt(node, sink)
+            is Go.BreakStmt -> renderBreakStmt(node, sink)
+            is Go.ContinueStmt -> renderContinueStmt(node, sink)
             is Go.Ident -> sink.name(node.name)
             is Go.BasicLit -> renderBasicLit(node, sink)
             is Go.SelectorExpr -> { renderExpr(node.x, sink); sink.punct("."); sink.name(node.sel) }
@@ -152,6 +155,23 @@ object GoRenderer {
             is Go.ExprStmt -> renderExpr(stmt.expr, sink)
             else -> render(stmt, sink)
         }
+    }
+
+    private fun renderLabeledStmt(stmt: Go.LabeledStmt, sink: TokenSink) {
+        sink.name(stmt.label); sink.punct(":"); sink.endLine()
+        render(stmt.stmt, sink)
+    }
+
+    private fun renderBreakStmt(stmt: Go.BreakStmt, sink: TokenSink) {
+        sink.keyword("break")
+        stmt.label?.let { sink.ws(); sink.name(it) }
+        sink.endLine()
+    }
+
+    private fun renderContinueStmt(stmt: Go.ContinueStmt, sink: TokenSink) {
+        sink.keyword("continue")
+        stmt.label?.let { sink.ws(); sink.name(it) }
+        sink.endLine()
     }
 
     private fun renderBlockStmt(block: Go.BlockStmt, sink: TokenSink) {
