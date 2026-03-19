@@ -48,5 +48,5 @@ object GoCommand : VersionedTool {
         return SemVer(versionString).checkMin(run, minVersion)
     }
 
-    val minVersion = SemVer(1, 24, 0)
+    val minVersion = SemVer(1, 18, 0)
 }

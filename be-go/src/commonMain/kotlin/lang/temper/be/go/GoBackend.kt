@@ -29,7 +29,29 @@ class GoBackend(setup: BackendSetup<GoBackend>) : Backend<GoBackend>(Factory.bac
         ).also { storeDescriptorsForDeclarations(it, Factory) }
 
     override fun translate(finished: TmpL.ModuleSet): List<OutputFileSpecification> {
-        return emptyList()
+        val modules = finished.modules
+        return buildList {
+            // Translate each module.
+            for (module in modules) {
+                val translator = GoTranslator(module)
+                add(translator.translateModule())
+            }
+            // Generate go.mod file.
+            val libraryConfiguration = libraryConfigurations.currentLibraryConfiguration
+            val modulePath = "temper/${libraryConfiguration.libraryName.text}"
+            val goModContent = buildString {
+                appendLine("module $modulePath")
+                appendLine()
+                appendLine("go 1.18")
+            }
+            add(
+                MetadataFileSpecification(
+                    path = lang.temper.log.filePath("go.mod"),
+                    mimeType = null,
+                    content = goModContent,
+                ),
+            )
+        }
     }
 
     override val supportNetwork = GoSupportNetwork
