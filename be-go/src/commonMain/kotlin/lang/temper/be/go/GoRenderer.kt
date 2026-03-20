@@ -31,7 +31,7 @@ object GoRenderer {
             is Go.IndexExpr -> {
                 renderExpr(node.x, sink); sink.bracket("["); renderExpr(node.index, sink); sink.bracket("]")
             }
-            is Go.BinaryExpr -> { renderExpr(node.x, sink); sink.infixOp(node.op.symbol); renderExpr(node.y, sink) }
+            is Go.BinaryExpr -> renderBinaryExpr(node, sink)
             is Go.UnaryExpr -> { sink.prefixOp(node.op.symbol); renderExpr(node.x, sink) }
             is Go.CompositeLit -> renderCompositeLit(node, sink)
             is Go.StarExpr -> { sink.punct("*"); renderExpr(node.x, sink) }
@@ -355,6 +355,41 @@ object GoRenderer {
     private fun renderBasicLit(lit: Go.BasicLit, sink: TokenSink) = when (lit.kind) {
         Go.BasicLitKind.String -> sink.quoted(lit.value)
         else -> sink.number(lit.value)
+    }
+
+    private fun renderBinaryExpr(expr: Go.BinaryExpr, sink: TokenSink) {
+        renderSubExpr(expr.x, expr.op, isLeft = true, sink)
+        sink.infixOp(expr.op.symbol)
+        renderSubExpr(expr.y, expr.op, isLeft = false, sink)
+    }
+
+    /** Render a sub-expression, adding parentheses if needed for operator precedence. */
+    private fun renderSubExpr(child: Go.Expr, parentOp: Go.BinOp, isLeft: Boolean, sink: TokenSink) {
+        if (child is Go.BinaryExpr && needsParens(child.op, parentOp, isLeft)) {
+            sink.punct("(")
+            renderBinaryExpr(child, sink)
+            sink.punct(")")
+        } else {
+            renderExpr(child, sink)
+        }
+    }
+
+    /** Check if a child binary expression needs parentheses inside a parent binary expression. */
+    private fun needsParens(childOp: Go.BinOp, parentOp: Go.BinOp, isLeft: Boolean): Boolean {
+        val childPrec = precedence(childOp)
+        val parentPrec = precedence(parentOp)
+        // Parenthesize if child has lower precedence.
+        // Also parenthesize right-hand side with equal precedence (left-to-right associativity).
+        return childPrec < parentPrec || (childPrec == parentPrec && !isLeft)
+    }
+
+    @Suppress("MagicNumber")
+    private fun precedence(op: Go.BinOp): Int = when (op) {
+        Go.BinOp.Or -> 1
+        Go.BinOp.And -> 2
+        Go.BinOp.Eq, Go.BinOp.Ne, Go.BinOp.Lt, Go.BinOp.Le, Go.BinOp.Gt, Go.BinOp.Ge -> 3
+        Go.BinOp.Plus, Go.BinOp.Minus, Go.BinOp.BitwiseOr -> 4
+        Go.BinOp.Times, Go.BinOp.Div, Go.BinOp.Mod, Go.BinOp.BitwiseAnd -> 5
     }
 
     private fun renderExpr(expr: Go.Expr, sink: TokenSink) = render(expr, sink)

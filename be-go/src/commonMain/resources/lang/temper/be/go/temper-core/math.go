@@ -2,37 +2,8 @@ package tempercore
 
 import "math"
 
-// AddInt adds two ints and panics on overflow.
-func AddInt(a, b int) int {
-	result := a + b
-	if (b > 0 && result < a) || (b < 0 && result > a) {
-		panic("integer overflow")
-	}
-	return result
-}
-
-// SubInt subtracts b from a and panics on overflow.
-func SubInt(a, b int) int {
-	if (b < 0 && a > math.MaxInt+b) || (b > 0 && a < math.MinInt+b) {
-		panic("integer overflow")
-	}
-	return a - b
-}
-
-// MulInt multiplies two ints and panics on overflow.
-func MulInt(a, b int) int {
-	if a == 0 || b == 0 {
-		return 0
-	}
-	result := a * b
-	if result/a != b {
-		panic("integer overflow")
-	}
-	return result
-}
-
 // IntMin returns the smaller of a and b.
-func IntMin(a, b int) int {
+func IntMin(a, b int32) int32 {
 	if a < b {
 		return a
 	}
@@ -40,7 +11,23 @@ func IntMin(a, b int) int {
 }
 
 // IntMax returns the larger of a and b.
-func IntMax(a, b int) int {
+func IntMax(a, b int32) int32 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// Int64Min returns the smaller of a and b.
+func Int64Min(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Int64Max returns the larger of a and b.
+func Int64Max(a, b int64) int64 {
 	if a > b {
 		return a
 	}

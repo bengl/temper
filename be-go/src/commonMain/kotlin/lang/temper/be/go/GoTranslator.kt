@@ -23,6 +23,7 @@ import lang.temper.value.TInt64
 import lang.temper.value.TNull
 import lang.temper.value.TString
 import lang.temper.value.TVoid
+import lang.temper.value.failSymbol
 
 /**
  * Minimal TmpL-to-Go translator. Currently handles enough nodes for simple programs
@@ -305,7 +306,8 @@ class GoTranslator(
             is TmpL.NominalType -> {
                 val typeDef = type.typeName.sourceDefinition ?: return null
                 when (typeDef) {
-                    WellKnownTypes.intTypeDefinition -> Go.NamedType(pos, "int")
+                    WellKnownTypes.intTypeDefinition -> Go.NamedType(pos, "int32")
+                    WellKnownTypes.int64TypeDefinition -> Go.NamedType(pos, "int64")
                     WellKnownTypes.booleanTypeDefinition -> Go.NamedType(pos, "bool")
                     WellKnownTypes.stringTypeDefinition -> Go.NamedType(pos, "string")
                     WellKnownTypes.float64TypeDefinition -> Go.NamedType(pos, "float64")
@@ -335,8 +337,33 @@ class GoTranslator(
     }
 
     private fun processStatements(statements: List<TmpL.Statement>, results: MutableList<Go.Stmt>) {
-        for (statement in statements) {
+        var i = 0
+        while (i < statements.size) {
+            val statement = statements[i]
+            when {
+                // HandlerScope as standalone statement — peek at next statement for the if-check.
+                statement is TmpL.HandlerScope -> {
+                    val check = statements.getOrNull(i + 1)
+                    translateHandlerScopeStandalone(statement, check)?.let { results.add(it) }
+                    i += 2
+                    continue
+                }
+                // Assignment with HandlerScope RHS — peek at next statement for the if-check.
+                statement is TmpL.Assignment && statement.right is TmpL.HandlerScope -> {
+                    val check = statements.getOrNull(i + 1)
+                    translateHandlerScopeAssignment(statement, check)?.let { results.addAll(it) }
+                    i += 2
+                    continue
+                }
+                // Local function declarations — translate as top-level Go functions.
+                statement is TmpL.LocalFunctionDeclaration -> {
+                    processLocalFunctionDeclaration(statement)
+                    i += 1
+                    continue
+                }
+            }
             translateStatement(statement)?.let { results.add(it) }
+            i += 1
         }
     }
 
@@ -361,6 +388,7 @@ class GoTranslator(
             is TmpL.LabeledStatement -> translateLabeledStatement(statement)
             is TmpL.BreakStatement -> translateBreakStatement(statement)
             is TmpL.ContinueStatement -> translateContinueStatement(statement)
+            is TmpL.ModuleInitFailed -> translateModuleInitFailed(statement)
             else -> {
                 logCannotTranslate(
                     statement.pos,
@@ -372,6 +400,8 @@ class GoTranslator(
     }
 
     private fun translateLocalDeclaration(decl: TmpL.ModuleOrLocalDeclaration): Go.Stmt? {
+        // Skip declarations marked with failSymbol — these are handler scope failure flags.
+        if (decl.metadata.any { it.key.symbol == failSymbol }) return null
         val pos = decl.pos
         val nameText = nameToString(decl.name.name) ?: return null
         val initExpr = decl.init?.let { translateExpression(it) }
@@ -496,6 +526,211 @@ class GoTranslator(
     private fun translateContinueStatement(statement: TmpL.ContinueStatement): Go.Stmt {
         val label = statement.label?.let { nameToString(it.id.name) }
         return Go.ContinueStmt(statement.pos, label)
+    }
+
+    private fun translateModuleInitFailed(statement: TmpL.ModuleInitFailed): Go.Stmt {
+        val pos = statement.pos
+        return Go.ExprStmt(
+            pos,
+            Go.CallExpr(
+                pos,
+                fn = Go.Ident(pos, "panic"),
+                args = listOf(Go.BasicLit(pos, Go.BasicLitKind.String, "\"module init failed\"")),
+            ),
+        )
+    }
+
+    /**
+     * Translate a standalone [TmpL.HandlerScope] (not assigned to anything).
+     * The handler scope evaluates [TmpL.HandlerScope.handled] and the next statement [check]
+     * is an if-statement testing the failure flag.
+     */
+    private fun translateHandlerScopeStandalone(
+        handlerScope: TmpL.HandlerScope,
+        check: TmpL.Statement?,
+    ): Go.Stmt? {
+        val pos = handlerScope.pos
+        val handled = handlerScope.handled as? TmpL.Expression ?: return null
+        val handledExpr = translateExpression(handled) ?: return null
+        // Generate: handledExpr (discard result)
+        val exprStmt = Go.ExprStmt(pos, handledExpr)
+        if (check is TmpL.IfStatement) {
+            // The if-check tests the fail flag. Translate the consequent.
+            val consequent = translateStatement(check.consequent)
+            val consequentBlock = when (consequent) {
+                is Go.BlockStmt -> consequent
+                null -> Go.BlockStmt(pos, emptyList())
+                else -> Go.BlockStmt(pos, listOf(consequent))
+            }
+            // For standalone handler scope, we just need to translate the check.
+            // The `handled` is a side-effecting expression — execute it as a statement.
+            val ifStmt = Go.IfStmt(
+                check.pos,
+                init = null,
+                cond = translateExpression(check.test) ?: return null,
+                body = consequentBlock,
+                elseStmt = null,
+            )
+            return Go.BlockStmt(pos, listOf(exprStmt, ifStmt))
+        }
+        return exprStmt
+    }
+
+    /**
+     * Check if a [TmpL.Expression] will produce a fallible (multi-value) Go call.
+     * Returns true if the expression is a call to a [GoFallibleTemperCoreFunc].
+     */
+    private fun isFallibleGoCall(expression: TmpL.Expression): Boolean {
+        if (expression !is TmpL.CallExpression) return false
+        val fn = expression.fn as? TmpL.FnReference ?: return false
+        val supportCode = supportCodeByName[fn.id.name]
+        return supportCode is GoSupportCode && supportCode.isFallible
+    }
+
+    /**
+     * Translate an [TmpL.Assignment] where the RHS is a [TmpL.HandlerScope].
+     *
+     * For fallible operations (that return `(value, bool)` in Go):
+     * ```go
+     * result, failed := tempercore.ParseInt32(s, radix)
+     * if failed {
+     *     panic("module init failed")  // or break label, etc.
+     * }
+     * ```
+     *
+     * For non-fallible operations (e.g., safe div/mod that Go handles natively):
+     * ```go
+     * result := expr
+     * ```
+     * The failure check is skipped since Go handles the edge cases natively.
+     */
+    private fun translateHandlerScopeAssignment(
+        assignment: TmpL.Assignment,
+        check: TmpL.Statement?,
+    ): List<Go.Stmt>? {
+        val pos = assignment.pos
+        val handlerScope = assignment.right as TmpL.HandlerScope
+        val handled = handlerScope.handled as? TmpL.Expression ?: return null
+        val handledExpr = translateExpression(handled) ?: return null
+        val resultName = nameToString(assignment.left.name) ?: return null
+
+        val stmts = mutableListOf<Go.Stmt>()
+
+        if (isFallibleGoCall(handled)) {
+            // The Go function returns (value, bool). Generate multi-value assignment.
+            val failedName = nameToString(handlerScope.failed.name) ?: return null
+            val resultAlreadyDeclared = isDeclared(resultName)
+            markDeclared(resultName)
+            markDeclared(failedName)
+
+            if (resultAlreadyDeclared) {
+                // Variable already declared — declare fail var separately and use `=`.
+                stmts.add(
+                    Go.DeclStmt(pos, Go.VarDecl(pos, failedName, Go.NamedType(pos, "bool"), null)),
+                )
+                stmts.add(
+                    Go.AssignStmt(
+                        pos,
+                        lhs = listOf(Go.Ident(pos, resultName), Go.Ident(pos, failedName)),
+                        rhs = listOf(handledExpr),
+                        op = Go.AssignOp.Assign,
+                    ),
+                )
+            } else {
+                stmts.add(
+                    Go.AssignStmt(
+                        pos,
+                        lhs = listOf(Go.Ident(pos, resultName), Go.Ident(pos, failedName)),
+                        rhs = listOf(handledExpr),
+                        op = Go.AssignOp.Define,
+                    ),
+                )
+            }
+
+            // Generate the if-check from the next statement.
+            if (check is TmpL.IfStatement) {
+                val cond = translateExpression(check.test) ?: return stmts
+                pushScope()
+                val consequent = translateStatement(check.consequent)
+                popScope()
+                val consequentBlock = when (consequent) {
+                    is Go.BlockStmt -> consequent
+                    null -> Go.BlockStmt(pos, emptyList())
+                    else -> Go.BlockStmt(pos, listOf(consequent))
+                }
+                val elseStmt = check.alternate?.let { alt ->
+                    pushScope()
+                    val s = translateStatement(alt)
+                    popScope()
+                    when (s) {
+                        is Go.ElseBranch -> s
+                        null -> null
+                        else -> Go.BlockStmt(pos, listOf(s))
+                    }
+                }
+                stmts.add(
+                    Go.IfStmt(check.pos, init = null, cond = cond, body = consequentBlock, elseStmt = elseStmt),
+                )
+            }
+        } else {
+            // Non-fallible operation — Go handles the edge cases natively.
+            // Just assign the result directly and skip the failure check.
+            val alreadyDeclared = isDeclared(resultName)
+            markDeclared(resultName)
+            stmts.add(
+                Go.AssignStmt(
+                    pos,
+                    lhs = listOf(Go.Ident(pos, resultName)),
+                    rhs = listOf(handledExpr),
+                    op = if (alreadyDeclared) Go.AssignOp.Assign else Go.AssignOp.Define,
+                ),
+            )
+        }
+
+        return stmts
+    }
+
+    /**
+     * Translate a [TmpL.LocalFunctionDeclaration] as a top-level Go function.
+     * Go doesn't have nested named function declarations, so we hoist them to top level.
+     */
+    private fun processLocalFunctionDeclaration(decl: TmpL.LocalFunctionDeclaration) {
+        val pos = decl.pos
+        val nameText = nameToString(decl.name.name) ?: run {
+            logCannotTranslate(pos, "Go backend: cannot resolve local function name")
+            return
+        }
+
+        // Translate parameters (skip `this` parameter if present).
+        val params = decl.parameters.parameters.mapNotNull { formal ->
+            if (formal.name == decl.parameters.thisName) return@mapNotNull null
+            val formalName = nameToString(formal.name.name) ?: return@mapNotNull null
+            val formalType = translateAType(formal.type) ?: run {
+                logCannotTranslate(pos, "Go backend: falling back to 'any' for parameter '$formalName'")
+                Go.NamedType(pos, "any")
+            }
+            Go.Field(pos, name = formalName, type = formalType)
+        }
+
+        // Translate return type.
+        val returnType = translateAType(decl.returnType)
+        val results = if (returnType != null) listOf(returnType) else emptyList()
+
+        // Translate body.
+        pushScope()
+        val bodyStmts = mutableListOf<Go.Stmt>()
+        processStatements(decl.body.statements, bodyStmts)
+        popScope()
+
+        val funcDecl = Go.FuncDecl(
+            pos,
+            name = nameText,
+            receiver = null,
+            params = params,
+            results = results,
+            body = Go.BlockStmt(pos, bodyStmts),
+        )
+        topLevelDecls.add(funcDecl)
     }
 
     private fun translateExpressionStatement(statement: TmpL.ExpressionStatement): Go.Stmt? {
@@ -635,8 +870,15 @@ class GoTranslator(
             "select", "struct", "switch", "type", "var",
         )
 
+        /** Predeclared identifiers that conflict with Go types when used as variable names. */
+        private val goBuiltinTypes = setOf(
+            "bool", "byte", "complex64", "complex128", "error",
+            "float32", "float64", "int", "int8", "int16", "int32", "int64",
+            "rune", "string", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+        )
+
         internal fun escapeGoKeyword(name: String): String =
-            if (name in goKeywords) "${name}_" else name
+            if (name in goKeywords || name in goBuiltinTypes) "${name}_" else name
 
         internal fun goEscapeString(s: String): String {
             val sb = StringBuilder()
@@ -663,7 +905,12 @@ class GoTranslator(
             }
             TInt -> {
                 val value = TInt.unpack(expression.value)
-                Go.BasicLit(pos, Go.BasicLitKind.Int, value.toString())
+                // Wrap in int32() to ensure the literal is typed as int32, not Go's default int.
+                Go.CallExpr(
+                    pos,
+                    fn = Go.Ident(pos, "int32"),
+                    args = listOf(Go.BasicLit(pos, Go.BasicLitKind.Int, value.toString())),
+                )
             }
             TInt64 -> {
                 val value = TInt64.unpack(expression.value)

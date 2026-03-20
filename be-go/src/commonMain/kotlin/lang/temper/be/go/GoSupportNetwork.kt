@@ -61,6 +61,13 @@ private val connectedReferences: Map<String, SupportCode> = mapOf(
     "String::isEmpty" to GoTemperCoreFunc("String::isEmpty", "StringIsEmpty"),
     "Int32::min" to GoTemperCoreFunc("Int32::min", "IntMin"),
     "Int32::max" to GoTemperCoreFunc("Int32::max", "IntMax"),
+    "Int32::toInt64" to GoTypeCast("Int32::toInt64", "int64"),
+    "Int64::toInt32Unsafe" to GoTypeCast("Int64::toInt32Unsafe", "int32"),
+    "Int64::min" to GoTemperCoreFunc("Int64::min", "Int64Min"),
+    "Int64::max" to GoTemperCoreFunc("Int64::max", "Int64Max"),
+    "String::toInt32" to GoFallibleTemperCoreFunc("String::toInt32", "ParseInt32"),
+    "String::toInt64" to GoFallibleTemperCoreFunc("String::toInt64", "ParseInt64"),
+    "Int64::toInt32" to GoFallibleTemperCoreFunc("Int64::toInt32", "Int64ToInt32"),
 )
 
 internal sealed class GoSupportCode(
@@ -68,6 +75,9 @@ internal sealed class GoSupportCode(
 ) : NamedSupportCode, FunctionSupportCode {
     override val baseName: ParsedName = ParsedName(connectedKey)
     override fun renderTo(tokenSink: TokenSink) = tokenSink.word(connectedKey)
+
+    /** Whether this support code returns multiple values (value, failed) in Go. */
+    open val isFallible: Boolean = false
 
     abstract fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr?
 }
@@ -145,7 +155,31 @@ internal class GoMathFunc(name: String, private val mathFuncName: String) : GoSu
     }
 }
 
+internal class GoTypeCast(name: String, private val targetType: String) : GoSupportCode(name) {
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
+        // Go type conversion: targetType(expr)
+        return Go.CallExpr(
+            pos,
+            fn = Go.Ident(pos, targetType),
+            args = listOf(arguments[0].expr),
+        )
+    }
+}
+
 internal class GoTemperCoreFunc(name: String, private val funcName: String) : GoSupportCode(name) {
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
+        translator.needsImport("temper.systems/core/go")
+        return Go.CallExpr(
+            pos,
+            fn = Go.SelectorExpr(pos, Go.Ident(pos, "tempercore"), funcName),
+            args = arguments.map { it.expr },
+        )
+    }
+}
+
+/** A temper-core function that returns (value, bool) in Go, used for fallible operations. */
+internal class GoFallibleTemperCoreFunc(name: String, private val funcName: String) : GoSupportCode(name) {
+    override val isFallible: Boolean = true
     override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
         translator.needsImport("temper.systems/core/go")
         return Go.CallExpr(

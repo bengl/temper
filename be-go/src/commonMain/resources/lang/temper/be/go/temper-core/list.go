@@ -11,8 +11,8 @@ func AppendImmutable[T any](slice []T, elem T) []T {
 }
 
 // GetChecked returns the element at index i, panicking with a descriptive message on out-of-bounds.
-func GetChecked[T any](slice []T, i int) T {
-	if i < 0 || i >= len(slice) {
+func GetChecked[T any](slice []T, i int32) T {
+	if i < 0 || int(i) >= len(slice) {
 		panic(fmt.Sprintf("index %d out of bounds for slice of length %d", i, len(slice)))
 	}
 	return slice[i]

@@ -40,11 +40,13 @@ val functionalTestStatus: Map<Ft, List<IssueCheck>> = buildMap {
     onlyPasses(
         go(198),
         Ft.AlgosFibonacci,
+        Ft.AlgosHelloFromClassToTop,
         Ft.AlgosHelloWorld,
         Ft.AlgosHelloWorldObject,
         Ft.ControlFlowIfReturn,
         Ft.ControlFlowLoops,
         Ft.TypesIntBasics,
+        Ft.TypesIntLimits,
         Ft.TypesStringIsEmpty,
     )
 }.mapValues { it.value.toList() }
