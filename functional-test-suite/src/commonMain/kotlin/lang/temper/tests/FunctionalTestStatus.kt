@@ -44,6 +44,8 @@ val functionalTestStatus: Map<Ft, List<IssueCheck>> = buildMap {
         Ft.AlgosHelloWorldObject,
         Ft.ControlFlowIfReturn,
         Ft.ControlFlowLoops,
+        Ft.TypesIntBasics,
+        Ft.TypesStringIsEmpty,
     )
 }.mapValues { it.value.toList() }
 

@@ -28,6 +28,16 @@ class GoFunctionalTest : FunctionalTestRunner<GoBackend>(GoBackend.Factory) {
         super.controlFlowLoops()
     }
 
+    @Test
+    override fun typesIntBasics() {
+        super.typesIntBasics()
+    }
+
+    @Test
+    override fun typesStringIsEmpty() {
+        super.typesStringIsEmpty()
+    }
+
     override fun runGeneratedCode(
         backend: GoBackend,
         modules: List<Module>,

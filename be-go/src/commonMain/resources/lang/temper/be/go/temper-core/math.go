@@ -31,6 +31,22 @@ func MulInt(a, b int) int {
 	return result
 }
 
+// IntMin returns the smaller of a and b.
+func IntMin(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// IntMax returns the larger of a and b.
+func IntMax(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // IsNaN reports whether f is NaN.
 func IsNaN(f float64) bool { return math.IsNaN(f) }
 

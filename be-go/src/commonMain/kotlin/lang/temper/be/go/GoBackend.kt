@@ -43,6 +43,10 @@ class GoBackend(setup: BackendSetup<GoBackend>) : Backend<GoBackend>(Factory.bac
                 appendLine("module $modulePath")
                 appendLine()
                 appendLine("go 1.18")
+                appendLine()
+                appendLine("require temper.systems/core/go v0.0.0")
+                appendLine()
+                appendLine("replace temper.systems/core/go => ../temper-core")
             }
             add(
                 MetadataFileSpecification(

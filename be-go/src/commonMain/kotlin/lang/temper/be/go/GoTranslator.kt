@@ -37,6 +37,11 @@ class GoTranslator(
     private val topLevelDecls = mutableListOf<Go.Decl>()
     private val supportCodeByName = mutableMapOf<ResolvedName, SupportCode>()
 
+    /** Import paths that need an explicit alias because the package name differs from the path's last segment. */
+    private val importAliases = mapOf(
+        "temper.systems/core/go" to "tempercore",
+    )
+
     /** Tracks variable names declared in nested scopes to avoid duplicate `:=`. */
     private val scopeStack = mutableListOf(mutableSetOf<String>())
 
@@ -71,13 +76,14 @@ class GoTranslator(
 
         // Build a Go.File with top-level functions + a main function.
         val pos = module.pos
+        val cleanedInitStmts = removeUnusedDeclarations(initStmts)
         val mainFunc = Go.FuncDecl(
             pos,
             name = "main",
             receiver = null,
             params = emptyList(),
             results = emptyList(),
-            body = Go.BlockStmt(pos, initStmts),
+            body = Go.BlockStmt(pos, cleanedInitStmts),
         )
 
         val allDecls: List<Go.Decl> = topLevelDecls + listOf(mainFunc)
@@ -85,7 +91,9 @@ class GoTranslator(
         val file = Go.File(
             pos,
             packageName = "main",
-            imports = imports.sorted().map { Go.ImportSpec(pos, alias = null, path = it) },
+            imports = imports.sorted().map { importPath ->
+                Go.ImportSpec(pos, alias = importAliases[importPath], path = importPath)
+            },
             decls = allDecls,
         )
 
@@ -705,5 +713,109 @@ class GoTranslator(
             pos = pos,
             values = listOf(diagnostic),
         )
+    }
+
+    /**
+     * Remove variable declarations whose names are never referenced elsewhere in the statement list.
+     * Go requires all declared variables to be used; TmpL may emit declarations for constants that
+     * get inlined at their use sites.
+     */
+    private fun removeUnusedDeclarations(stmts: List<Go.Stmt>): List<Go.Stmt> {
+        // Collect all identifier names referenced in expressions (not on the LHS of declarations).
+        val referenced = mutableSetOf<String>()
+        for (stmt in stmts) {
+            collectReferencedIdents(stmt, referenced, topLevel = true)
+        }
+        // Filter out `:=` declarations where the LHS name is never referenced.
+        return stmts.filter { stmt ->
+            when {
+                stmt is Go.AssignStmt && stmt.op == Go.AssignOp.Define -> {
+                    val name = (stmt.lhs.singleOrNull() as? Go.Ident)?.name
+                    name == null || name in referenced
+                }
+                stmt is Go.DeclStmt -> {
+                    stmt.decl.name in referenced
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun collectReferencedIdents(node: Go.Node, out: MutableSet<String>, topLevel: Boolean = false) {
+        when (node) {
+            is Go.Ident -> out.add(node.name)
+            is Go.AssignStmt -> {
+                // For define statements at the top level, only collect from RHS (not LHS).
+                // For nested assigns and non-define assigns, collect from both.
+                if (topLevel && node.op == Go.AssignOp.Define) {
+                    node.rhs.forEach { collectReferencedIdents(it, out) }
+                } else {
+                    node.lhs.forEach { collectReferencedIdents(it, out) }
+                    node.rhs.forEach { collectReferencedIdents(it, out) }
+                }
+            }
+            is Go.DeclStmt -> {
+                // Don't count the declaration name itself as a reference.
+                node.decl.type?.let { collectReferencedIdents(it, out) }
+                node.decl.init?.let { collectReferencedIdents(it, out) }
+            }
+            is Go.BlockStmt -> node.stmts.forEach { collectReferencedIdents(it, out) }
+            is Go.ExprStmt -> collectReferencedIdents(node.expr, out)
+            is Go.ReturnStmt -> node.results.forEach { collectReferencedIdents(it, out) }
+            is Go.IfStmt -> {
+                node.init?.let { collectReferencedIdents(it, out) }
+                collectReferencedIdents(node.cond, out)
+                collectReferencedIdents(node.body, out)
+                (node.elseStmt as? Go.Node)?.let { collectReferencedIdents(it, out) }
+            }
+            is Go.ForStmt -> {
+                node.init?.let { collectReferencedIdents(it, out) }
+                node.cond?.let { collectReferencedIdents(it, out) }
+                node.post?.let { collectReferencedIdents(it, out) }
+                collectReferencedIdents(node.body, out)
+            }
+            is Go.LabeledStmt -> collectReferencedIdents(node.stmt, out)
+            is Go.CallExpr -> {
+                collectReferencedIdents(node.fn, out)
+                node.args.forEach { collectReferencedIdents(it, out) }
+            }
+            is Go.SelectorExpr -> collectReferencedIdents(node.x, out)
+            is Go.BinaryExpr -> {
+                collectReferencedIdents(node.x, out)
+                collectReferencedIdents(node.y, out)
+            }
+            is Go.UnaryExpr -> collectReferencedIdents(node.x, out)
+            is Go.IndexExpr -> {
+                collectReferencedIdents(node.x, out)
+                collectReferencedIdents(node.index, out)
+            }
+            is Go.CompositeLit -> {
+                node.type?.let { collectReferencedIdents(it, out) }
+                node.elts.forEach { collectReferencedIdents(it, out) }
+            }
+            is Go.StarExpr -> collectReferencedIdents(node.x, out)
+            is Go.AddressExpr -> collectReferencedIdents(node.x, out)
+            is Go.SliceExpr -> {
+                collectReferencedIdents(node.x, out)
+                node.low?.let { collectReferencedIdents(it, out) }
+                node.high?.let { collectReferencedIdents(it, out) }
+            }
+            is Go.TypeAssertExpr -> {
+                collectReferencedIdents(node.x, out)
+                collectReferencedIdents(node.assertType, out)
+            }
+            is Go.FuncLit -> collectReferencedIdents(node.body, out)
+            is Go.KeyValueExpr -> {
+                collectReferencedIdents(node.key, out)
+                collectReferencedIdents(node.value, out)
+            }
+            // Leaf nodes or types that don't contain ident references.
+            is Go.BasicLit, is Go.BreakStmt, is Go.ContinueStmt -> {}
+            is Go.NamedType, is Go.PointerType, is Go.SliceType,
+            is Go.MapType, is Go.QualifiedType, is Go.IndexTypeExpr,
+            is Go.FuncType, is Go.StructType, is Go.InterfaceType,
+            -> {}
+            else -> {} // Catch-all for other node types.
+        }
     }
 }

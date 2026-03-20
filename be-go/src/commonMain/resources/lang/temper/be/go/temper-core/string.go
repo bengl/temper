@@ -23,6 +23,9 @@ func StringSlice(s string, start, end int) string {
 // RuneCount returns the number of Unicode code points in s.
 func RuneCount(s string) int { return utf8.RuneCountInString(s) }
 
+// StringIsEmpty returns true if the string has zero length.
+func StringIsEmpty(s string) bool { return len(s) == 0 }
+
 // RuneAt returns the Unicode code point at position i (rune index).
 func RuneAt(s string, i int) rune {
 	idx := 0

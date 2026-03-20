@@ -58,6 +58,9 @@ private val connectedReferences: Map<String, SupportCode> = mapOf(
     "Int64::toString" to GoFmtSprint("Int64::toString"),
     "Float64::toString" to GoFmtSprint("Float64::toString"),
     "Boolean::toString" to GoFmtSprint("Boolean::toString"),
+    "String::isEmpty" to GoTemperCoreFunc("String::isEmpty", "StringIsEmpty"),
+    "Int32::min" to GoTemperCoreFunc("Int32::min", "IntMin"),
+    "Int32::max" to GoTemperCoreFunc("Int32::max", "IntMax"),
 )
 
 internal sealed class GoSupportCode(
@@ -137,6 +140,17 @@ internal class GoMathFunc(name: String, private val mathFuncName: String) : GoSu
         return Go.CallExpr(
             pos,
             fn = Go.SelectorExpr(pos, Go.Ident(pos, "math"), mathFuncName),
+            args = arguments.map { it.expr },
+        )
+    }
+}
+
+internal class GoTemperCoreFunc(name: String, private val funcName: String) : GoSupportCode(name) {
+    override fun inlineToGo(pos: Position, arguments: List<TypedArg<Go.Expr>>, translator: GoTranslator): Go.Expr {
+        translator.needsImport("temper.systems/core/go")
+        return Go.CallExpr(
+            pos,
+            fn = Go.SelectorExpr(pos, Go.Ident(pos, "tempercore"), funcName),
             args = arguments.map { it.expr },
         )
     }
