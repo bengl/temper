@@ -34,7 +34,7 @@ class GoTranslator(
 ) {
     private val imports = mutableSetOf<String>()
     private val initStmts = mutableListOf<Go.Stmt>()
-    private val topLevelFuncs = mutableListOf<Go.FuncDecl>()
+    private val topLevelDecls = mutableListOf<Go.Decl>()
     private val supportCodeByName = mutableMapOf<ResolvedName, SupportCode>()
 
     /** Tracks variable names declared in nested scopes to avoid duplicate `:=`. */
@@ -80,7 +80,7 @@ class GoTranslator(
             body = Go.BlockStmt(pos, initStmts),
         )
 
-        val allDecls: List<Go.Decl> = topLevelFuncs + listOf(mainFunc)
+        val allDecls: List<Go.Decl> = topLevelDecls + listOf(mainFunc)
 
         val file = Go.File(
             pos,
@@ -107,6 +107,7 @@ class GoTranslator(
             is TmpL.ModuleLevelDeclaration -> processModuleLevelDeclaration(topLevel)
             is TmpL.SupportCodeDeclaration -> {} // Already collected in first pass
             is TmpL.ModuleFunctionDeclaration -> processModuleFunctionDeclaration(topLevel)
+            is TmpL.TypeDeclaration -> processTypeDeclaration(topLevel)
             else -> logCannotTranslate(
                 topLevel.pos,
                 "Go backend: unsupported top-level node ${topLevel::class.simpleName}",
@@ -163,7 +164,126 @@ class GoTranslator(
             results = results,
             body = Go.BlockStmt(pos, bodyStmts),
         )
-        topLevelFuncs.add(funcDecl)
+        topLevelDecls.add(funcDecl)
+    }
+
+    private fun processTypeDeclaration(decl: TmpL.TypeDeclaration) {
+        when (decl.kind) {
+            TmpL.TypeDeclarationKind.Class -> processTypeDeclarationClass(decl)
+            else -> logCannotTranslate(
+                decl.pos,
+                "Go backend: unsupported type declaration kind ${decl.kind}",
+            )
+        }
+    }
+
+    private fun processTypeDeclarationClass(decl: TmpL.TypeDeclaration) {
+        val pos = decl.pos
+        val className = nameToString(decl.name.name) ?: return
+
+        // Collect instance properties as struct fields.
+        val properties = decl.members.filterIsInstance<TmpL.InstanceProperty>()
+        val fields = properties.mapNotNull { prop ->
+            val fieldName = prop.dotName.dotNameText
+            val fieldType = translateAType(prop.type) ?: run {
+                logCannotTranslate(pos, "Go backend: cannot translate field type for '$fieldName'")
+                return@mapNotNull null
+            }
+            Go.Field(pos, name = fieldName, type = fieldType)
+        }
+
+        // Emit struct type declaration.
+        val structDecl = Go.TypeDecl(
+            pos,
+            name = className,
+            typeDef = Go.StructType(pos, fields),
+        )
+        topLevelDecls.add(structDecl)
+
+        // Emit constructor function: func NewClassName(fields...) *ClassName { ... }
+        val constructorParams = fields.map { f ->
+            Go.Field(pos, name = f.name, type = f.type)
+        }
+        // Build constructor body: allocate struct, assign fields, return pointer.
+        val constructorStmts = mutableListOf<Go.Stmt>()
+        constructorStmts.add(
+            Go.AssignStmt(
+                pos,
+                lhs = listOf(Go.Ident(pos, "result")),
+                rhs = listOf(Go.CompositeLit(pos, type = Go.NamedType(pos, className), elts = emptyList())),
+                op = Go.AssignOp.Define,
+            ),
+        )
+        for (f in fields) {
+            val fieldName = f.name ?: continue
+            constructorStmts.add(
+                Go.AssignStmt(
+                    pos,
+                    lhs = listOf(Go.SelectorExpr(pos, Go.Ident(pos, "result"), fieldName)),
+                    rhs = listOf(Go.Ident(pos, fieldName)),
+                    op = Go.AssignOp.Assign,
+                ),
+            )
+        }
+        constructorStmts.add(
+            Go.ReturnStmt(pos, listOf(Go.AddressExpr(pos, Go.Ident(pos, "result")))),
+        )
+        val constructorBody = Go.BlockStmt(pos, constructorStmts)
+        val constructorFunc = Go.FuncDecl(
+            pos,
+            name = "New$className",
+            receiver = null,
+            params = constructorParams,
+            results = listOf(Go.PointerType(pos, Go.NamedType(pos, className))),
+            body = constructorBody,
+        )
+        topLevelDecls.add(constructorFunc)
+
+        // Emit methods.
+        val methods = decl.members.filterIsInstance<TmpL.NormalMethod>()
+        for (method in methods) {
+            processInstanceMethod(method, className)
+        }
+    }
+
+    private fun processInstanceMethod(method: TmpL.NormalMethod, className: String) {
+        val pos = method.pos
+        val methodName = method.dotName.dotNameText
+
+        // Translate parameters (skip `this` parameter).
+        val params = method.parameters.parameters.mapNotNull { formal ->
+            if (formal.name == method.parameters.thisName) return@mapNotNull null
+            val formalName = nameToString(formal.name.name) ?: return@mapNotNull null
+            val formalType = translateAType(formal.type) ?: run {
+                logCannotTranslate(pos, "Go backend: falling back to 'any' for parameter '$formalName'")
+                Go.NamedType(pos, "any")
+            }
+            Go.Field(pos, name = formalName, type = formalType)
+        }
+
+        // Translate return type.
+        val returnType = translateAType(method.returnType)
+        val results = if (returnType != null) listOf(returnType) else emptyList()
+
+        // Translate body.
+        pushScope()
+        val bodyStmts = mutableListOf<Go.Stmt>()
+        method.body?.let { processStatements(it.statements, bodyStmts) }
+        popScope()
+
+        val funcDecl = Go.FuncDecl(
+            pos,
+            name = methodName,
+            receiver = Go.Field(
+                pos,
+                name = "self",
+                type = Go.PointerType(pos, Go.NamedType(pos, className)),
+            ),
+            params = params,
+            results = results,
+            body = Go.BlockStmt(pos, bodyStmts),
+        )
+        topLevelDecls.add(funcDecl)
     }
 
     private fun translateAType(atype: TmpL.AType): Go.TypeExpr? {
@@ -183,8 +303,9 @@ class GoTranslator(
                     WellKnownTypes.float64TypeDefinition -> Go.NamedType(pos, "float64")
                     WellKnownTypes.voidTypeDefinition -> null // void -> no return type
                     else -> {
-                        logCannotTranslate(pos, "Go backend: unsupported type ${typeDef.name}")
-                        null
+                        // User-defined type — use pointer to struct.
+                        val typeName = nameToString(typeDef.name) ?: return null
+                        Go.PointerType(pos, Go.NamedType(pos, typeName))
                     }
                 }
             }
@@ -385,10 +506,33 @@ class GoTranslator(
             is TmpL.ValueReference -> translateValueReference(expression)
             is TmpL.Reference -> translateReference(expression)
             is TmpL.InfixOperation -> translateInfixOperation(expression)
+            is TmpL.This -> Go.Ident(expression.pos, "self")
+            is TmpL.GetBackedProperty -> translateGetProperty(expression)
+            is TmpL.GetAbstractProperty -> translateGetProperty(expression)
             else -> {
                 logCannotTranslate(expression.pos, "Go backend: unsupported expression ${expression::class.simpleName}")
                 null
             }
+        }
+    }
+
+    private fun translateGetProperty(expression: TmpL.GetProperty): Go.Expr? {
+        val pos = expression.pos
+        val subject = when (val subj = expression.subject) {
+            is TmpL.Expression -> translateExpression(subj)
+            else -> {
+                logCannotTranslate(pos, "Go backend: unsupported property subject ${subj::class.simpleName}")
+                null
+            }
+        } ?: return null
+        val propName = translatePropertyId(expression.property) ?: return null
+        return Go.SelectorExpr(pos, subject, propName)
+    }
+
+    private fun translatePropertyId(property: TmpL.PropertyId): String? {
+        return when (property) {
+            is TmpL.InternalPropertyId -> nameToString(property.name.name)
+            is TmpL.ExternalPropertyId -> property.name.dotNameText
         }
     }
 
@@ -411,6 +555,25 @@ class GoTranslator(
                     translateExpression(actual as TmpL.Expression) ?: return null
                 }
                 Go.CallExpr(call.pos, fn = callee, args = args)
+            }
+            is TmpL.ConstructorReference -> {
+                val typeName = nameToString(fn.typeName.sourceDefinition.name) ?: return null
+                val args = call.parameters.map { actual ->
+                    translateExpression(actual as TmpL.Expression) ?: return null
+                }
+                Go.CallExpr(call.pos, fn = Go.Ident(call.pos, "New$typeName"), args = args)
+            }
+            is TmpL.MethodReference -> {
+                val subject = translateExpression(fn.subject as TmpL.Expression) ?: return null
+                val methodName = fn.methodName.dotNameText
+                val args = call.parameters.map { actual ->
+                    translateExpression(actual as TmpL.Expression) ?: return null
+                }
+                Go.CallExpr(
+                    call.pos,
+                    fn = Go.SelectorExpr(call.pos, subject, methodName),
+                    args = args,
+                )
             }
             else -> {
                 logCannotTranslate(call.pos, "Go backend: unsupported callable ${fn::class.simpleName}")
